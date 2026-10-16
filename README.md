@@ -477,7 +477,8 @@ BSD-3-Clause, cryptography Apache-2.0/BSD, and others). Their full texts are in
 [THIRD-PARTY-NOTICES](THIRD-PARTY-NOTICES), which the installer puts next to
 the executable.
 
-Privacy policy: <https://parl0v.github.io/ludusctrl/docs/privacy.html>
+Privacy policy: [PRIVACY.md](PRIVACY.md), also at
+<https://parl0v.github.io/ludusctrl/docs/privacy.html>.
 
 LudusCtrl is not affiliated with, endorsed by, or sponsored by Sony
 Interactive Entertainment, Microsoft, or Nintendo. Product names are used only
