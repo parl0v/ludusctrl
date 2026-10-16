@@ -91,8 +91,9 @@ an older receiver. Update both together.
 ## Install
 
 Download `LudusCtrl-<version>-setup.exe` from the
-[latest release](https://github.com/parl0v/parl0v.github.io/releases/tag/ludusctrl-v1.2)
-and check its SHA-256 against the one in the release notes. The installer:
+[latest release](https://github.com/parl0v/ludusctrl/releases/latest) and
+check its SHA-256 against the one in the release notes. Each release is built
+from the tagged commit in this repository. The installer:
 
 - puts the receiver under Program Files, with Start menu shortcuts for
   **LudusCtrl** and **LudusCtrl (phone browser mode)**;
