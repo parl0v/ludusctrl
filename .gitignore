@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+
+# PyInstaller and installer output (tools/build_exe.py, tools/build_installer.py)
+pc/dist/
+pc/build/
+pc/*.spec
+installer/Output/
+
+# Bundled third-party driver: a 6 MB binary, fetched and checked by hash.
+# See tools/build_installer.py for the pinned SHA-256 and the download URL.
+installer/vendor/*.exe
+
+# Generated while running or testing
+*.log
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,1455 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later
+     Copyright (C) 2026 Josip Parlov (@parl0v). See NOTICE for the attribution terms. -->
+<meta charset="utf-8">
+<title>LudusCtrl</title>
+<style>
+/* ------------------------------------------------------------------ *
+ * LudusCtrl - instrument panel front end.
+ *
+ * The app's content is measurement: round trip, throughput, packet
+ * count, live input. So the shell is bench test equipment and the pad
+ * view is a vector CRT, which is what that data honestly looks like.
+ *
+ * Fonts are deliberately local. This runs offline inside a PyInstaller
+ * bundle, so a webfont would silently fall back to something generic.
+ * Bahnschrift is DIN 1451 and ships with Windows 10+.
+ * ------------------------------------------------------------------ */
+
+:root {
+  --enamel:      #C4BFAE;
+  --enamel-hi:   #D6D1C0;
+  --enamel-lo:   #A8A392;
+  --silk:        #23211C;
+  --silk-soft:   #5A5648;
+  --groove:      #8F8A79;
+
+  --crt:         #08120A;
+  --crt-edge:    #040805;
+  --phos:        #6BFF57;
+  --gratic:      #1B3A1E;
+
+  --amber:       #FFAE2B;
+  --red:         #E0402A;
+
+  --panel-font: "Bahnschrift", "DIN Alternate", "Segoe UI Semibold", sans-serif;
+  --read-font:  "Consolas", "Cascadia Mono", ui-monospace, monospace;
+}
+
+/* A CRT is dark whatever the room is doing. What changes with the
+   viewer's theme is the light falling on the panel around it. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --enamel:    #6B675A;
+    --enamel-hi: #7C7869;
+    --enamel-lo: #55524A;
+    --silk:      #E4E0D2;
+    --silk-soft: #A29D8C;
+    --groove:    #423F38;
+  }
+}
+:root[data-theme="dark"] {
+  --enamel:    #6B675A;
+  --enamel-hi: #7C7869;
+  --enamel-lo: #55524A;
+  --silk:      #E4E0D2;
+  --silk-soft: #A29D8C;
+  --groove:    #423F38;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body { height: 100%; overflow: hidden; }
+
+body {
+  font-family: var(--panel-font);
+  color: var(--silk);
+  /* Brushed enamel: a fine vertical grain plus a broad top-down falloff. */
+  background:
+    repeating-linear-gradient(90deg,
+      rgba(255,255,255,.035) 0 1px, rgba(0,0,0,.025) 1px 2px, transparent 2px 5px),
+    linear-gradient(176deg, var(--enamel-hi) 0%, var(--enamel) 42%, var(--enamel-lo) 100%);
+  display: flex;
+  flex-direction: column;
+  padding: 14px 16px 12px;
+  gap: 11px;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+/* ---- title block ------------------------------------------------- */
+
+header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 9px;
+  border-bottom: 1px solid var(--groove);
+  box-shadow: 0 1px 0 var(--enamel-hi);
+  flex: none;
+}
+.brand { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.brand h1 {
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: .17em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.model {
+  font-family: var(--read-font);
+  font-size: 9.5px;
+  letter-spacing: .1em;
+  color: var(--silk-soft);
+  white-space: nowrap;
+  padding-bottom: 1px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---- indicator lamps --------------------------------------------- */
+
+.lamps { display: flex; gap: 13px; flex: none; }
+.lamp {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 9.5px; letter-spacing: .13em; text-transform: uppercase;
+  color: var(--silk-soft);
+  transition: color .25s;
+}
+.bulb {
+  width: 9px; height: 9px; border-radius: 50%;
+  background: var(--groove);
+  box-shadow: inset 0 1px 1.5px rgba(0,0,0,.55);
+  transition: background .18s, box-shadow .18s;
+}
+.lamp.on { color: var(--silk); }
+.lamp.on[data-c="live"] .bulb {
+  background: var(--phos);
+  box-shadow: 0 0 9px 1px rgba(107,255,87,.75), inset 0 0 3px rgba(255,255,255,.6);
+}
+.lamp.on[data-c="wait"] .bulb {
+  background: var(--amber);
+  box-shadow: 0 0 9px 1px rgba(255,174,43,.75), inset 0 0 3px rgba(255,255,255,.6);
+  animation: blink 1.15s steps(1) infinite;
+}
+.lamp.on[data-c="err"] .bulb {
+  background: var(--red);
+  box-shadow: 0 0 9px 1px rgba(224,64,42,.7), inset 0 0 3px rgba(255,255,255,.5);
+}
+@keyframes blink { 50% { opacity: .32; } }
+
+/* ---- main split --------------------------------------------------- */
+
+/* The window is 560x800 by default, so portrait is the normal case and
+   gets the primary layout: tube on top, readouts underneath. */
+main {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+}
+
+/* ---- the screen --------------------------------------------------- */
+
+.bezel {
+  position: relative;
+  border-radius: 5px;
+  padding: 9px;
+  background: linear-gradient(168deg, var(--enamel-lo), var(--groove));
+  /* Recess: dark inner lip, light outer lip. */
+  box-shadow:
+    inset 0 2px 4px rgba(0,0,0,.5),
+    inset 0 -1px 0 rgba(255,255,255,.14),
+    0 1px 0 var(--enamel-hi);
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  /* Fill whatever is left after the readouts. The canvas letterboxes the
+     400x250 design space itself, and the graticule fills the rest, which
+     is what a scope face actually looks like. Sizing the bezel by
+     aspect-ratio instead blows its width out, because nothing clamps the
+     axis the ratio derives. */
+  flex: 1 1 auto;
+}
+.glass {
+  position: relative;
+  flex: 1;
+  border-radius: 3px;
+  background:
+    radial-gradient(120% 100% at 50% 0%, #0E2011 0%, var(--crt) 58%, var(--crt-edge) 100%);
+  box-shadow: inset 0 0 26px rgba(0,0,0,.85), inset 0 0 3px rgba(107,255,87,.14);
+  overflow: hidden;
+  min-width: 0;
+}
+#pad { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+
+/* Scanlines with a slow drift, faint enough to read straight through. */
+.glass::after {
+  content: "";
+  position: absolute; inset: -50% 0;
+  background: repeating-linear-gradient(180deg,
+    rgba(0,0,0,.26) 0 1px, transparent 1px 3px);
+  animation: drift 9s linear infinite;
+  pointer-events: none;
+}
+@keyframes drift { to { transform: translateY(3px); } }
+
+/* Power on: the tube warms, then the image opens vertically. */
+.warm {
+  position: absolute; inset: 0;
+  background: var(--crt);
+  animation: warmup 900ms ease-out forwards;
+  pointer-events: none;
+}
+@keyframes warmup {
+  0%, 55% { opacity: 1; }
+  100%    { opacity: 0; }
+}
+#pad { animation: sweep 900ms cubic-bezier(.2,.8,.25,1) forwards; }
+@keyframes sweep {
+  0%   { clip-path: inset(50% 0 50% 0); opacity: 0; }
+  55%  { clip-path: inset(50% 0 50% 0); opacity: .5; }
+  100% { clip-path: inset(0 0 0 0);     opacity: 1; }
+}
+
+/* ---- readout stack ------------------------------------------------ */
+
+.stack {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  min-width: 0;
+  align-content: start;
+}
+.rocker { grid-column: 1 / -1; }
+
+.meter {
+  background: linear-gradient(180deg, rgba(0,0,0,.09), rgba(255,255,255,.05));
+  border: 1px solid var(--groove);
+  border-radius: 3px;
+  padding: 6px 9px 7px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.13);
+  min-width: 0;
+}
+.meter .k {
+  font-size: 8.5px; letter-spacing: .16em; text-transform: uppercase;
+  color: var(--silk-soft);
+}
+.meter .v {
+  font-family: var(--read-font);
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+  color: var(--silk);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  margin-top: 1px;
+}
+.meter .v.sm { font-size: 12.5px; }
+
+/* ---- rocker switch ------------------------------------------------ */
+
+.rocker > .k {
+  font-size: 8.5px; letter-spacing: .16em; text-transform: uppercase;
+  color: var(--silk-soft); display: block; margin-bottom: 5px;
+}
+.switch {
+  display: grid; grid-template-columns: 1fr 1fr;
+  border: 1px solid var(--groove); border-radius: 3px; overflow: hidden;
+  box-shadow: inset 0 1px 3px rgba(0,0,0,.35);
+}
+.switch button {
+  font-family: var(--panel-font);
+  font-size: 10px; letter-spacing: .09em; text-transform: uppercase;
+  padding: 7px 2px;
+  border: 0; cursor: pointer;
+  color: var(--silk-soft);
+  background: linear-gradient(180deg, var(--enamel-hi), var(--enamel-lo));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.3);
+  transition: color .15s, box-shadow .15s, transform .06s;
+}
+.switch button + button { border-left: 1px solid var(--groove); }
+.switch button:hover:not(.on) { color: var(--silk); }
+.switch button:active { transform: translateY(.5px); }
+.switch button.on {
+  color: var(--phos);
+  background: linear-gradient(180deg, #14261A, #0B1A0F);
+  box-shadow: inset 0 2px 5px rgba(0,0,0,.65), inset 0 0 12px rgba(107,255,87,.2);
+  text-shadow: 0 0 7px rgba(107,255,87,.75);
+}
+.switch button:focus-visible { outline: 2px solid var(--phos); outline-offset: -3px; }
+body.busy .switch { opacity: .5; pointer-events: none; }
+
+.note {
+  font-size: 9.5px; line-height: 1.42; color: var(--silk-soft);
+  margin-top: 6px;
+}
+.note.err { color: var(--red); }
+/* The status line gives way first; the version stays readable. */
+#ver { flex: none; }
+#sub { min-width: 0; }
+
+/* ---- browser client ---------------------------------------------- */
+
+.webblock { grid-column: 1 / -1; min-width: 0; }
+.webline { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.webline .k {
+  font-size: 8.5px; letter-spacing: .16em; text-transform: uppercase;
+  color: var(--silk-soft);
+}
+/* A toggle switch with a lamp in its paddle, lit phosphor green when on. */
+.toggle {
+  flex: none; width: 38px; height: 20px; padding: 0; cursor: pointer;
+  position: relative; border: 1px solid var(--groove); border-radius: 3px;
+  background: linear-gradient(180deg, rgba(0,0,0,.18), rgba(0,0,0,.05));
+  box-shadow: inset 0 1px 3px rgba(0,0,0,.35);
+}
+.toggle::after {
+  content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 14px;
+  border-radius: 2px;
+  background: linear-gradient(180deg, var(--enamel-hi), var(--enamel-lo));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.3), 0 1px 1px rgba(0,0,0,.3);
+  transition: transform .15s, background .15s, box-shadow .15s;
+}
+.toggle[aria-checked="true"]::after {
+  transform: translateX(16px);
+  background: linear-gradient(180deg, #14261A, #0B1A0F);
+  box-shadow: inset 0 0 6px rgba(107,255,87,.6), 0 0 6px rgba(107,255,87,.45);
+}
+.toggle[disabled] { opacity: .5; cursor: default; }
+.toggle:focus-visible, .key:focus-visible { outline: 2px solid var(--phos); outline-offset: 1px; }
+.urlrow { display: flex; align-items: center; gap: 5px; margin-top: 6px; min-width: 0; }
+.urlrow[hidden] { display: none; }
+.url {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--read-font); font-size: 10.5px; color: var(--silk);
+  user-select: all; -webkit-user-select: all;
+}
+.key {
+  flex: none; font-family: var(--panel-font); font-size: 9px; letter-spacing: .09em;
+  text-transform: uppercase; padding: 3px 7px; cursor: pointer; color: var(--silk-soft);
+  border: 1px solid var(--groove); border-radius: 3px;
+  background: linear-gradient(180deg, var(--enamel-hi), var(--enamel-lo));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.3);
+}
+.key:hover { color: var(--silk); }
+.key:active { transform: translateY(.5px); }
+.tapehead .key { margin-left: 6px; padding: 1px 6px; }
+
+/* ---- paired phones ------------------------------------------------ */
+
+.phoneblock { grid-column: 1 / -1; min-width: 0; }
+
+/* ---- QR, pairing and phones sheets -------------------------------- */
+
+#qrSheet, #pairSheet, #phonesSheet {
+  position: fixed; inset: 0; z-index: 10; display: flex; align-items: center;
+  justify-content: center; padding: 16px; background: rgba(8,10,8,.72);
+}
+/* A pairing request goes over anything else that is open. */
+#pairSheet { z-index: 20; }
+#qrSheet[hidden], #pairSheet[hidden], #phonesSheet[hidden] { display: none; }
+.sheet.pair { text-align: center; }
+.pairname { font-size: 12px; margin-top: 2px; word-break: break-word; }
+/* The code on the tube, where the eye already goes for a reading. */
+.paircode {
+  font-family: var(--read-font); font-size: 42px; letter-spacing: .1em;
+  margin: 10px auto 8px; padding: 6px 12px; width: fit-content;
+  color: var(--phos); background: var(--crt); border: 1px solid var(--crt-edge);
+  border-radius: 4px; text-shadow: 0 0 8px rgba(107,255,87,.6);
+}
+.pairhelp { font-size: 10.5px; line-height: 1.5; color: var(--silk); }
+.sheet .actions { gap: 6px; align-items: center; }
+.sheet .actions .count { flex: 1; text-align: left; font-size: 10px; color: var(--silk-soft);
+  font-variant-numeric: tabular-nums; }
+.sheet .actions .key { font-size: 10px; padding: 5px 12px; }
+.key[disabled] { opacity: .45; cursor: default; }
+#phonesEmpty[hidden] { display:none; }
+#phonesList { list-style: none; margin-top: 8px; }
+#phonesList li { display: flex; align-items: center; gap: 8px; padding: 6px 0;
+  border-top: 1px solid var(--groove); font-size: 11px; }
+#phonesList .who { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#phonesList .when { font-size: 9.5px; color: var(--silk-soft); }
+.sheet {
+  width: min(400px, 100%); max-height: 100%; overflow: auto; padding: 14px 16px;
+  border: 1px solid var(--groove); border-radius: 4px;
+  background: linear-gradient(176deg, var(--enamel-hi), var(--enamel) 60%, var(--enamel-lo));
+  box-shadow: 0 10px 30px rgba(0,0,0,.45);
+  user-select: text; -webkit-user-select: text;
+}
+.sheet h2 { font-size: 13px; letter-spacing: .14em; text-transform: uppercase; margin-bottom: 6px; }
+.sheet .url { white-space: normal; word-break: break-all; }
+/* Black on white whatever the panel colour: that is what a camera reads. */
+.sheet canvas.qr {
+  display: block; margin: 10px auto; width: min(210px, 45vh); height: auto;
+  aspect-ratio: 1; image-rendering: pixelated; border-radius: 2px;
+}
+.sheet ol { margin: 6px 0 0 16px; font-size: 10.5px; line-height: 1.5; color: var(--silk); }
+.sheet .others { margin-top: 10px; }
+.sheet .others[hidden] { display: none; }
+.sheet .others .k {
+  font-size: 8.5px; letter-spacing: .16em; text-transform: uppercase; color: var(--silk-soft);
+}
+.sheet .others button { display: block; width: 100%; text-align: left; margin-top: 4px;
+  text-transform: none; letter-spacing: 0; font-family: var(--read-font); font-size: 10.5px; }
+.sheet .actions { display: flex; justify-content: flex-end; margin-top: 12px; }
+
+/* ---- printer tape ------------------------------------------------- */
+
+footer { flex: none; display: flex; flex-direction: column; gap: 5px; }
+.tapehead {
+  display: flex; justify-content: space-between; align-items: baseline; gap: 12px;
+  font-size: 8.5px; letter-spacing: .16em; text-transform: uppercase;
+  color: var(--silk-soft);
+}
+.addr {
+  font-family: var(--read-font); letter-spacing: .04em; color: var(--silk);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+#log {
+  height: 66px;
+  overflow-y: auto;
+  font-family: var(--read-font);
+  font-size: 10.5px;
+  line-height: 1.55;
+  color: var(--silk);
+  /* Fanfold paper: tint bands plus a punched edge down the left. */
+  background:
+    linear-gradient(90deg, var(--groove) 0 3px, transparent 3px),
+    repeating-linear-gradient(180deg,
+      rgba(0,0,0,.05) 0 16.28px, transparent 16.28px 32.56px),
+    rgba(255,255,255,.16);
+  border: 1px solid var(--groove);
+  border-radius: 2px;
+  padding: 3px 8px 3px 12px;
+  box-shadow: inset 0 1px 3px rgba(0,0,0,.22);
+}
+#log div { white-space: pre-wrap; word-break: break-word; }
+#log::-webkit-scrollbar { width: 7px; }
+#log::-webkit-scrollbar-thumb { background: var(--groove); border-radius: 4px; }
+
+/* ---- responsive --------------------------------------------------- */
+
+/* Wide enough to put the readouts beside the tube instead of under it. */
+@media (min-width: 780px) {
+  main { flex-direction: row; align-items: stretch; }
+  .stack {
+    grid-template-columns: 1fr;
+    width: 172px; flex: none;
+    align-content: start;
+  }
+  .rocker { margin-top: auto; }
+}
+@media (max-height: 560px) {
+  #log { height: 40px; }
+  .note { display: none; }
+  .note.err, .sheet .note { display: block; }
+  header { padding-bottom: 6px; }
+  body { padding: 11px 13px 10px; gap: 9px; }
+}
+@media (max-height: 470px) { footer { display: none; } }
+@media (max-width: 470px) {
+  .lamp span, .model { display: none; }
+  .lamps { gap: 9px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .glass::after, .lamp.on .bulb { animation: none; }
+  #pad, .warm { animation-duration: 1ms; }
+}
+</style>
+
+<header>
+  <div class="brand">
+    <h1>LudusCtrl</h1>
+    <span class="model" id="sub">GAMEPAD BRIDGE RECEIVER</span>
+    <span class="model" id="ver" title="LudusCtrl by Josip Parlov (@parl0v). Free software under the GNU AGPL 3.0 or later, with no warranty; see LICENSE and NOTICE."></span>
+  </div>
+  <div class="lamps" aria-live="polite">
+    <div class="lamp" data-c="live" id="lampLive"><i class="bulb"></i>Live</div>
+    <div class="lamp" data-c="wait" id="lampWait"><i class="bulb"></i>Waiting</div>
+    <div class="lamp" data-c="err" id="lampErr"><i class="bulb"></i>Fault</div>
+  </div>
+</header>
+
+<main>
+  <div class="bezel">
+    <div class="glass">
+      <canvas id="pad" role="img" aria-label="Live view of the controller's buttons and sticks"></canvas>
+      <div class="warm"></div>
+    </div>
+  </div>
+
+  <div class="stack">
+    <div class="meter">
+      <span class="k">Client</span>
+      <div class="v sm" id="mClient">&mdash;</div>
+    </div>
+    <div class="meter">
+      <span class="k">Packets</span>
+      <div class="v" id="mPackets">&mdash;</div>
+    </div>
+    <div class="meter">
+      <span class="k">Throughput</span>
+      <div class="v" id="mRate">&mdash;</div>
+    </div>
+
+    <div class="rocker">
+      <span class="k">Emulate</span>
+      <div class="switch" role="group" aria-label="Emulate">
+        <button id="btnX360" data-kind="x360" aria-pressed="false">Xbox 360</button>
+        <button id="btnDs4" data-kind="ds4" aria-pressed="false">DualShock 4</button>
+      </div>
+      <p class="note" id="padHint"></p>
+    </div>
+
+    <div class="webblock">
+      <div class="webline">
+        <span class="k" id="webLabel">Browser client</span>
+        <button class="toggle" id="webToggle" role="switch" aria-checked="false"
+                aria-labelledby="webLabel"></button>
+      </div>
+      <p class="note" id="webNote">For phones without the app, such as an iPhone.</p>
+      <div class="urlrow" id="webUrlRow" hidden>
+        <span class="url" id="webUrl"></span>
+        <button class="key" id="webCopy">Copy</button>
+        <button class="key" id="webQr">QR</button>
+      </div>
+    </div>
+
+    <div class="phoneblock">
+      <div class="webline">
+        <span class="k">Phones</span>
+        <button class="key" id="phonesBtn">Paired phones</button>
+      </div>
+      <p class="note" id="phonesNote" aria-live="polite">Waiting for a paired phone</p>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <div class="tapehead">
+    <span>Event log <button class="key" id="logBtn" title="Open the folder with ludusctrl.log">Folder</button></span>
+    <span class="addr" id="addr">&mdash;</span>
+  </div>
+  <div id="log"></div>
+</footer>
+
+<div id="qrSheet" hidden role="dialog" aria-modal="true" aria-labelledby="qrTitle">
+  <div class="sheet">
+    <h2 id="qrTitle">Open on the phone</h2>
+    <div class="url" id="qrUrl"></div>
+    <canvas class="qr" id="qrCanvas" role="img" aria-label="QR code of the link above"></canvas>
+    <ol>
+      <li>Scan this with the phone's camera. The phone must be on the same Wi-Fi as this PC.</li>
+      <li>The browser warns about the certificate once. On iPhone: Show Details, then visit this website.</li>
+      <li>Pair the controller with the phone over Bluetooth, then press Start link.</li>
+    </ol>
+    <p class="note">The link works until LudusCtrl is closed; the next start makes a new one.</p>
+    <div class="others" id="qrOthers" hidden>
+      <span class="k">Not loading? Try another network adapter</span>
+    </div>
+    <div class="actions"><button class="key" id="qrClose">Close</button></div>
+  </div>
+</div>
+
+<div id="pairSheet" hidden role="alertdialog" aria-modal="true" aria-labelledby="pairTitle"
+     aria-describedby="pairHelp">
+  <div class="sheet pair">
+    <h2 id="pairTitle">Pair a phone?</h2>
+    <div class="pairname" id="pairName"></div>
+    <div class="paircode" id="pairCode"></div>
+    <p class="pairhelp" id="pairHelp">Allow only if the phone shows exactly this code.
+      If it does not, or nobody just pressed Start link on a phone, deny.</p>
+    <div class="actions">
+      <span class="count" id="pairCount"></span>
+      <button class="btn ghost key" id="pairDeny">Deny</button>
+      <button class="btn primary key" id="pairAllow">Allow</button>
+    </div>
+  </div>
+</div>
+
+<div id="phonesSheet" hidden role="dialog" aria-modal="true" aria-labelledby="phonesTitle">
+  <div class="sheet">
+    <h2 id="phonesTitle">Paired phones</h2>
+    <p class="note" id="phonesEmpty">No phone is paired yet. Press Start link in the
+      app on the phone and this PC asks whether to pair it.</p>
+    <ul id="phonesList"></ul>
+    <p class="note">A removed phone has to pair again before it can connect.</p>
+    <div class="actions"><button class="key" id="phonesClose">Close</button></div>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+const $ = id => document.getElementById(id);
+
+/* Design space, matching the Android PadView so both draw the same pad. */
+const VW = 400, VH = 250;
+const STICK_OUTER = 26, STICK_TRAVEL = 12;
+
+/* Frame-rate independent easing: k = 1 - e^(-rate*dt). A per-frame
+   constant would animate at whatever the refresh rate happens to be. */
+const GLOW_RATE = 38;
+const MOVE_RATE = 55;
+const DECAY_RATE = 7;      /* phosphor persistence, deliberately slower */
+let easeK = { glow: .3, move: .4, decay: .1 };
+
+const B = {
+  UP: 0x0001, DOWN: 0x0002, LEFT: 0x0004, RIGHT: 0x0008,
+  OPTIONS: 0x0010, CREATE: 0x0020, L3: 0x0040, R3: 0x0080,
+  L1: 0x0100, R1: 0x0200, PS: 0x0400,
+  CROSS: 0x1000, CIRCLE: 0x2000, SQUARE: 0x4000, TRIANGLE: 0x8000,
+};
+
+/* Pad layout, from byte 19 of the input packet. Cosmetic only: the button mask
+   is positional and identical across vendors, so this chooses glyphs and
+   control positions, never a remapping. */
+const LAYOUTS = {
+  1: { face:{ n:'△', e:'○', s:'✕', w:'□' },
+       sh:['L1','R1'], tr:['L2','R2'], guide:'PS',
+       body:'ps', guideAt:[200,150], pillL:[148,73], pillR:[252,73],
+       ls:[148,148], rs:[252,148], dpad:[100,105], faceAt:[300,105],
+       touchpad:true },
+  /* Xbox puts the left stick where PlayStation puts the d-pad, and the d-pad
+     down where PlayStation puts the left stick. */
+  2: { face:{ n:'Y', e:'B', s:'A', w:'X' },
+       sh:['LB','RB'], tr:['LT','RT'], guide:'❖',
+       body:'xbox', guideAt:[200,92], pillL:[176,112], pillR:[224,112],
+       ls:[104,98], rs:[246,150], dpad:[146,150], faceAt:[296,98],
+       touchpad:false },
+  /* Nintendo letters east/south the opposite way round. */
+  3: { face:{ n:'X', e:'A', s:'B', w:'Y' },
+       sh:['L','R'], tr:['ZL','ZR'], guide:'⌂',
+       body:'nintendo', guideAt:[200,92], pillL:[176,112], pillR:[224,112],
+       ls:[104,98], rs:[246,150], dpad:[146,150], faceAt:[296,98],
+       touchpad:false },
+  /* Unrecognised pad. Most generic Bluetooth pads print the letters Android
+     itself reports (BUTTON_A/B/X/Y, L1/L2), so those are the least wrong
+     guess; drawing a DualSense promised a touchpad the pad does not have. */
+  0: { face:{ n:'Y', e:'B', s:'A', w:'X' },
+       sh:['L1','R1'], tr:['L2','R2'], guide:'●',
+       body:'generic', guideAt:[200,92], pillL:[176,112], pillR:[224,112],
+       ls:[104,98], rs:[246,150], dpad:[146,150], faceAt:[296,98],
+       touchpad:false },
+};
+
+// Four silhouettes, all mirrored about x=200. The Xbox shell is not a
+// relabelled DualSense: its top edge dips in the middle between two shoulder
+// humps, and the grips are longer and swept further out. The Nintendo shell is
+// rounder, with a flat top and short, full grips under a lower waist. The
+// generic one is deliberately plain, an arched top over straight-down grips,
+// so an unknown pad does not look like any vendor's.
+function bodyPath(g, style) {
+  g.beginPath();
+  if (style === 'nintendo') {
+    g.moveTo(94, 54); g.lineTo(306, 54);
+    g.bezierCurveTo(346, 54, 372, 78, 376, 116);
+    g.bezierCurveTo(380, 160, 372, 204, 346, 222);
+    g.bezierCurveTo(322, 238, 286, 236, 274, 212);
+    g.bezierCurveTo(268, 200, 256, 192, 236, 190);
+    g.bezierCurveTo(216, 188, 184, 188, 164, 190);
+    g.bezierCurveTo(144, 192, 132, 200, 126, 212);
+    g.bezierCurveTo(114, 236, 78, 238, 54, 222);
+    g.bezierCurveTo(28, 204, 20, 160, 24, 116);
+    g.bezierCurveTo(28, 78, 54, 54, 94, 54);
+  } else if (style === 'generic') {
+    g.moveTo(200, 50);
+    g.bezierCurveTo(250, 50, 300, 53, 330, 58);
+    g.bezierCurveTo(360, 63, 374, 88, 374, 124);
+    g.bezierCurveTo(374, 160, 366, 190, 356, 212);
+    g.bezierCurveTo(344, 238, 300, 242, 288, 214);
+    g.bezierCurveTo(282, 200, 276, 186, 256, 186);
+    g.lineTo(144, 186);
+    g.bezierCurveTo(124, 186, 118, 200, 112, 214);
+    g.bezierCurveTo(100, 242, 56, 238, 44, 212);
+    g.bezierCurveTo(34, 190, 26, 160, 26, 124);
+    g.bezierCurveTo(26, 88, 40, 63, 70, 58);
+    g.bezierCurveTo(100, 53, 150, 50, 200, 50);
+  } else if (style === 'xbox') {
+    g.moveTo(200, 74);
+    g.bezierCurveTo(234, 58, 270, 50, 302, 52);
+    g.bezierCurveTo(342, 54, 368, 78, 372, 120);
+    g.bezierCurveTo(378, 172, 360, 224, 320, 234);
+    g.bezierCurveTo(294, 240, 272, 218, 260, 194);
+    g.bezierCurveTo(251, 180, 238, 174, 220, 174);
+    g.lineTo(180, 174);
+    g.bezierCurveTo(162, 174, 149, 180, 140, 194);
+    g.bezierCurveTo(130, 220, 108, 241, 80, 234);
+    g.bezierCurveTo(40, 224, 22, 172, 28, 120);
+    g.bezierCurveTo(32, 78, 58, 54, 98, 52);
+    g.bezierCurveTo(130, 50, 166, 58, 200, 74);
+  } else {
+    g.moveTo(72, 50); g.lineTo(328, 50);
+    g.bezierCurveTo(366, 50, 379, 86, 374, 124);
+    g.bezierCurveTo(368, 190, 342, 234, 308, 228);
+    g.bezierCurveTo(286, 222, 268, 196, 258, 170);
+    g.lineTo(142, 170);
+    g.bezierCurveTo(132, 196, 114, 222, 92, 228);
+    g.bezierCurveTo(58, 234, 32, 190, 26, 124);
+    g.bezierCurveTo(21, 86, 34, 50, 72, 50);
+  }
+  g.closePath();
+}
+
+
+const cv = $('pad'), g = cv.getContext('2d');
+
+let state = { buttons: 0, lx: 0, ly: 0, rx: 0, ry: 0, lt: 0, rt: 0,
+              connected: false, layout: 0 };
+let vis = { lx: 0, ly: 0, rx: 0, ry: 0 };
+const glow = {};
+
+/* Redrawn only when something changed (dirty) or a trace is still easing or
+   decaying (animating); an idle tube used to be redrawn every frame. */
+let dirty = true, animating = false;
+
+function ease(cur, target, k) {
+  const n = cur + (target - cur) * k;
+  if (Math.abs(target - n) < 0.0008) return target;
+  animating = true;
+  return n;
+}
+
+/* Phosphor: a control that lights climbs fast and falls slow, so the
+   trace smears the way a real tube does. */
+function lit(key, on) {
+  glow[key] = ease(glow[key] || 0, on ? 1 : 0, on ? easeK.glow : easeK.decay);
+  return glow[key];
+}
+
+function resize() {
+  const r = cv.getBoundingClientRect();
+  if (!r.width || !r.height) return;
+  const dpr = window.devicePixelRatio || 1;
+  const w = Math.max(1, Math.round(r.width * dpr));
+  const h = Math.max(1, Math.round(r.height * dpr));
+  if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; dirty = true; }
+}
+/* The observer is the only caller. draw() used to call resize() as well,
+   forcing a layout read on every single frame. */
+new ResizeObserver(resize).observe(cv);
+
+/* Two passes per stroke: a wide faint halo, then a bright thin core.
+   Cheaper than shadowBlur and it reads more like phosphor. */
+function beam(path, amt, width) {
+  if (amt <= 0.004) return;
+  g.lineJoin = 'round'; g.lineCap = 'round';
+  g.strokeStyle = 'rgba(107,255,87,' + (0.13 * amt) + ')';
+  g.lineWidth = width * 4.2;
+  path(); g.stroke();
+  g.strokeStyle = 'rgba(150,255,135,' + Math.min(1, 0.55 + 0.45 * amt) + ')';
+  g.lineWidth = width;
+  path(); g.stroke();
+}
+
+function idle(path, width) {
+  g.strokeStyle = 'rgba(58,174,49,.42)';
+  g.lineWidth = width; g.lineJoin = 'round'; g.lineCap = 'round';
+  path(); g.stroke();
+}
+
+function fillBeam(path, amt) {
+  if (amt <= 0.004) return;
+  g.fillStyle = 'rgba(107,255,87,' + (0.16 * amt) + ')';
+  path(); g.fill();
+  g.fillStyle = 'rgba(160,255,145,' + (0.72 * amt) + ')';
+  path(); g.fill();
+}
+
+function graticule() {
+  g.strokeStyle = 'rgba(27,58,30,.85)';
+  g.lineWidth = .6;
+  for (let i = 1; i < 10; i++) {
+    const x = VW * i / 10;
+    g.beginPath(); g.moveTo(x, 0); g.lineTo(x, VH); g.stroke();
+  }
+  for (let i = 1; i < 8; i++) {
+    const y = VH * i / 8;
+    g.beginPath(); g.moveTo(0, y); g.lineTo(VW, y); g.stroke();
+  }
+  /* Centre cross, as on a scope face. */
+  g.strokeStyle = 'rgba(27,58,30,1)'; g.lineWidth = 1;
+  g.beginPath(); g.moveTo(VW / 2, 0); g.lineTo(VW / 2, VH); g.stroke();
+  g.beginPath(); g.moveTo(0, VH / 2); g.lineTo(VW, VH / 2); g.stroke();
+}
+
+function label(t, x, y, size, amt) {
+  g.fillStyle = 'rgba(150,255,135,' + (0.4 + 0.6 * amt) + ')';
+  g.font = size + 'px "Consolas",ui-monospace,monospace';
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillText(t, x, y);
+}
+
+function draw() {
+  /* Letterbox the 400x250 design space into whatever the glass is now. */
+  const s = Math.min(cv.width / VW, cv.height / VH);
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.clearRect(0, 0, cv.width, cv.height);
+  g.setTransform(s, 0, 0, s, (cv.width - VW * s) / 2, (cv.height - VH * s) / 2);
+
+  graticule();
+
+  const b = state.buttons;
+  const L = LAYOUTS[state.layout] || LAYOUTS[0];
+  const rr = (x, y, w, h, r) => () => { g.beginPath(); g.roundRect(x, y, w, h, r); };
+  const circ = (x, y, r) => () => { g.beginPath(); g.arc(x, y, r, 0, 7); };
+
+  /* Triggers are analogue, so they read as a filling bar. */
+  const trig = (l, r, val, name) => {
+    const key = 'tr' + name;
+    vis[key] = ease(vis[key] || 0, val / 255, easeK.move);
+    const v = vis[key];
+    idle(rr(l, 8, r - l, 18, 9), 1.2);
+    if (v > .004) {
+      g.save(); rr(l, 8, r - l, 18, 9)(); g.clip();
+      fillBeam(rr(l, 8, (r - l) * v, 18, 9), 1);
+      g.restore();
+    }
+    label(name, (l + r) / 2, 17.5, 10, v);
+  };
+  trig(62, 150, state.lt, L.tr[0]);
+  trig(250, 338, state.rt, L.tr[1]);
+
+  const pill = (l, r, on, name) => {
+    const t = lit(name, on);
+    idle(rr(l, 34, r - l, 16, 8), 1.2);
+    beam(rr(l, 34, r - l, 16, 8), t, 1.6);
+    label(name, (l + r) / 2, 42, 9.5, t);
+  };
+  pill(62, 150, b & B.L1, L.sh[0]);
+  pill(250, 338, b & B.R1, L.sh[1]);
+
+  /* Body outline, same bezier path as the Android view. */
+  const body = () => bodyPath(g, L.body);
+  glow.body = ease(glow.body || 0, state.connected ? 1 : 0, easeK.glow);
+  idle(body, 1.6);
+  beam(body, glow.body * .85, 1.8);
+
+  /* D-pad */
+  const cx = L.dpad[0], cy = L.dpad[1], arm = 16, half = 6.5;
+  idle(() => {
+    g.beginPath();
+    g.rect(cx - half, cy - arm, half * 2, arm * 2);
+    g.rect(cx - arm, cy - half, arm * 2, half * 2);
+  }, 1.1);
+  const dp = (k, on, x, y, w, h) => {
+    const t = lit(k, on);
+    if (t < .01) return;
+    fillBeam(() => { g.beginPath(); g.rect(x, y, w, h); }, t);
+  };
+  dp('du', b & B.UP, cx - half, cy - arm, half * 2, arm - half);
+  dp('dd', b & B.DOWN, cx - half, cy + half, half * 2, arm - half);
+  dp('dl', b & B.LEFT, cx - arm, cy - half, arm - half, half * 2);
+  dp('dr', b & B.RIGHT, cx + half, cy - half, arm - half, half * 2);
+
+  /* Face buttons */
+  const fx = L.faceAt[0], fy = L.faceAt[1], d = 23;
+  const face = (k, on, x, y, glyph) => {
+    const t = lit(k, on);
+    idle(circ(x, y, 11), 1.2);
+    beam(circ(x, y, 11), t, 1.6);
+    label(glyph, x, y + .5, 12, t);
+  };
+  face('tri', b & B.TRIANGLE, fx, fy - d, L.face.n);
+  face('cir', b & B.CIRCLE, fx + d, fy, L.face.e);
+  face('cro', b & B.CROSS, fx, fy + d, L.face.s);
+  face('sqr', b & B.SQUARE, fx - d, fy, L.face.w);
+
+  /* Touchpad, Create / Options, PS */
+  if (L.touchpad) idle(rr(165, 62, 70, 40, 7), 1.1);
+  const small = (k, on, l, t2, r, bm) => {
+    const t = lit(k, on);
+    idle(rr(l, t2, r - l, bm - t2, 3), 1);
+    beam(rr(l, t2, r - l, bm - t2, 3), t, 1.4);
+  };
+  small('crt', b & B.CREATE, L.pillL[0] - 8, L.pillL[1] - 7, L.pillL[0] + 8, L.pillL[1] + 7);
+  small('opt', b & B.OPTIONS, L.pillR[0] - 8, L.pillR[1] - 7, L.pillR[0] + 8, L.pillR[1] + 7);
+
+  const tps = lit('ps', b & B.PS);
+  idle(circ(L.guideAt[0], L.guideAt[1], 9), 1.1);
+  beam(circ(L.guideAt[0], L.guideAt[1], 9), tps, 1.5);
+  label(L.guide, L.guideAt[0], L.guideAt[1] + 0.5, 8, tps);
+
+  /* Sticks */
+  const stick = (side, sxp, syp, tx, ty, pressed) => {
+    vis[side + 'x'] = ease(vis[side + 'x'], tx / 32767, easeK.move);
+    vis[side + 'y'] = ease(vis[side + 'y'], ty / 32767, easeK.move);
+    let nx = vis[side + 'x'], ny = vis[side + 'y'];
+    /* Axes arrive per-axis, so a full diagonal is sqrt(2) long. Real
+       sticks are circle gated, so clamp to the unit circle. */
+    const m = Math.hypot(nx, ny);
+    if (m > 1) { nx /= m; ny /= m; }
+
+    const hx = sxp + nx * STICK_TRAVEL;
+    const hy = syp - ny * STICK_TRAVEL;   /* wire is positive-up */
+    const t = lit(side + '3', pressed);
+
+    idle(circ(sxp, syp, STICK_OUTER), 1.2);
+    /* The deflection line is the one mark a scope would really draw,
+       so it gets to be the brightest thing on the screen. */
+    if (m > .01) {
+      beam(() => { g.beginPath(); g.moveTo(sxp, syp); g.lineTo(hx, hy); },
+        Math.min(1, m * 1.6), 1.3);
+    }
+    idle(circ(hx, hy, 12), 1.3);
+    beam(circ(hx, hy, 12), t, 1.7);
+    if (t > .01) fillBeam(circ(hx, hy, 4), t);
+  };
+  stick('l', L.ls[0], L.ls[1], state.lx, state.ly, b & B.L3);
+  stick('r', L.rs[0], L.rs[1], state.rx, state.ry, b & B.R3);
+}
+
+/* ---- frame loop --------------------------------------------------- */
+
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(.1, (now - last) / 1000);
+  last = now;
+  easeK.glow = 1 - Math.exp(-GLOW_RATE * dt);
+  easeK.move = 1 - Math.exp(-MOVE_RATE * dt);
+  easeK.decay = 1 - Math.exp(-DECAY_RATE * dt);
+  if (dirty || animating) {
+    dirty = animating = false;
+    draw();
+  }
+  requestAnimationFrame(frame);
+}
+resize();
+requestAnimationFrame(frame);
+
+/* ---- bridge, identical contract to the original front end ---------- */
+
+window.setPad = p => { state = p; dirty = true; };
+
+window.setStats = st => {
+  $('mClient').textContent = st.client;
+  $('mPackets').textContent = st.packets;
+  $('mRate').textContent = st.rate;
+  $('lampLive').classList.toggle('on', st.level === 'live');
+  $('lampWait').classList.toggle('on', st.level === 'wait');
+  $('lampErr').classList.toggle('on', st.level === 'err');
+  if (st.note !== undefined) $('phonesNote').textContent = st.note;
+};
+
+window.setInfo = info => {
+  $('sub').textContent = info.sub;
+  $('addr').textContent = info.address;
+  if (info.version) $('ver').textContent = 'v' + info.version;
+  setKind(info.kind);
+};
+
+window.appendLog = line => {
+  const log = $('log');
+  const el = document.createElement('div');
+  el.textContent = line;
+  log.appendChild(el);
+  while (log.childElementCount > 400) log.removeChild(log.firstChild);
+  log.scrollTop = log.scrollHeight;
+};
+
+function setKind(kind) {
+  for (const [id, k] of [['btnX360', 'x360'], ['btnDs4', 'ds4']]) {
+    $(id).classList.toggle('on', kind === k);
+    $(id).setAttribute('aria-pressed', kind === k ? 'true' : 'false');
+  }
+  $('padHint').textContent = kind === 'ds4'
+    ? 'Games show PlayStation prompts.'
+    : 'Widest compatibility.';
+}
+
+const busy = on => document.body.classList.toggle('busy', on);
+
+['btnX360', 'btnDs4'].forEach(id => {
+  $(id).addEventListener('click', async e => {
+    const kind = e.currentTarget.dataset.kind;
+    busy(true);
+    setKind(kind);
+    try { await window.pywebview.api.set_pad(kind); } finally { busy(false); }
+  });
+});
+
+/* QR:BEGIN */
+// Minimal QR encoder: byte mode, error correction level M, versions 1-10
+// (up to 213 bytes, several times the longest link this shows). Written out
+// here rather than pulled in as a library because this window runs offline
+// from a PyInstaller bundle. Follows ISO/IEC 18004; pc/test_web_page.py
+// decodes its output with an independent decoder to prove it.
+const QR = (() => {
+  // Level M, indexed by version.
+  const ECC_PER_BLOCK = [0, 10, 16, 26, 18, 24, 16, 18, 22, 22, 26];
+  const BLOCKS        = [0, 1, 1, 1, 2, 2, 4, 4, 4, 5, 5];
+  const FORMAT_M = 0;
+
+  const gfMul = (x, y) => {
+    let z = 0;
+    for (let i = 7; i >= 0; i--) {
+      z = (z << 1) ^ ((z >>> 7) * 0x11D);
+      z ^= ((y >>> i) & 1) * x;
+    }
+    return z;
+  };
+
+  function rsDivisor(degree) {
+    const r = new Array(degree).fill(0);
+    r[degree - 1] = 1;
+    let root = 1;
+    for (let i = 0; i < degree; i++) {
+      for (let j = 0; j < r.length; j++) {
+        r[j] = gfMul(r[j], root);
+        if (j + 1 < r.length) r[j] ^= r[j + 1];
+      }
+      root = gfMul(root, 0x02);
+    }
+    return r;
+  }
+
+  function rsRemainder(data, divisor) {
+    const r = divisor.map(() => 0);
+    for (const b of data) {
+      const factor = b ^ r.shift();
+      r.push(0);
+      divisor.forEach((d, i) => { r[i] ^= gfMul(d, factor); });
+    }
+    return r;
+  }
+
+  const rawModules = (ver) => {
+    let n = (16 * ver + 128) * ver + 64;
+    if (ver >= 2) {
+      const a = Math.floor(ver / 7) + 2;
+      n -= (25 * a - 10) * a - 55;
+      if (ver >= 7) n -= 36;
+    }
+    return n;
+  };
+  const dataCodewords = (ver) =>
+    Math.floor(rawModules(ver) / 8) - ECC_PER_BLOCK[ver] * BLOCKS[ver];
+
+  function alignmentPositions(ver, size) {
+    if (ver === 1) return [];
+    const n = Math.floor(ver / 7) + 2;
+    const step = Math.ceil((ver * 4 + 4) / (n * 2 - 2)) * 2;
+    const out = [6];
+    for (let pos = size - 7; out.length < n; pos -= step) out.splice(1, 0, pos);
+    return out;
+  }
+
+  function encode(text) {
+    const bytes = Array.from(new TextEncoder().encode(text));
+    let ver = 1;
+    for (;; ver++) {
+      if (ver > 10) throw new Error("text too long for a QR code here");
+      const ccBits = ver < 10 ? 8 : 16;
+      if (4 + ccBits + bytes.length * 8 <= dataCodewords(ver) * 8) break;
+    }
+    const size = ver * 4 + 17;
+
+    // Data bits: byte mode, length, payload, terminator, padding.
+    const bits = [];
+    const put = (val, len) => { for (let i = len - 1; i >= 0; i--) bits.push((val >>> i) & 1); };
+    put(0x4, 4);
+    put(bytes.length, ver < 10 ? 8 : 16);
+    for (const b of bytes) put(b, 8);
+    const capacity = dataCodewords(ver) * 8;
+    put(0, Math.min(4, capacity - bits.length));
+    put(0, (8 - bits.length % 8) % 8);
+    for (let pad = 0xEC; bits.length < capacity; pad ^= 0xEC ^ 0x11) put(pad, 8);
+    const data = [];
+    for (let i = 0; i < bits.length; i += 8) {
+      let b = 0;
+      for (let j = 0; j < 8; j++) b = (b << 1) | bits[i + j];
+      data.push(b);
+    }
+
+    // Split into blocks, add Reed-Solomon, interleave.
+    const nBlocks = BLOCKS[ver], eccLen = ECC_PER_BLOCK[ver];
+    const rawCw = Math.floor(rawModules(ver) / 8);
+    const nShort = nBlocks - rawCw % nBlocks;
+    const shortLen = Math.floor(rawCw / nBlocks);
+    const div = rsDivisor(eccLen);
+    const blocks = [];
+    for (let i = 0, k = 0; i < nBlocks; i++) {
+      const dat = data.slice(k, k + shortLen - eccLen + (i < nShort ? 0 : 1));
+      k += dat.length;
+      const ecc = rsRemainder(dat, div);
+      if (i < nShort) dat.push(0);
+      blocks.push(dat.concat(ecc));
+    }
+    const codewords = [];
+    for (let i = 0; i < blocks[0].length; i++) {
+      blocks.forEach((blk, j) => {
+        if (i !== shortLen - eccLen || j >= nShort) codewords.push(blk[i]);
+      });
+    }
+
+    // Function patterns.
+    const m = [], fn = [];
+    for (let y = 0; y < size; y++) { m.push(new Array(size).fill(false)); fn.push(new Array(size).fill(false)); }
+    const setF = (x, y, dark) => { m[y][x] = dark; fn[y][x] = true; };
+    for (let i = 0; i < size; i++) { setF(6, i, i % 2 === 0); setF(i, 6, i % 2 === 0); }
+    const finder = (cx, cy) => {
+      for (let dy = -4; dy <= 4; dy++) for (let dx = -4; dx <= 4; dx++) {
+        const d = Math.max(Math.abs(dx), Math.abs(dy)), x = cx + dx, y = cy + dy;
+        if (x >= 0 && x < size && y >= 0 && y < size) setF(x, y, d !== 2 && d !== 4);
+      }
+    };
+    finder(3, 3); finder(size - 4, 3); finder(3, size - 4);
+    const al = alignmentPositions(ver, size);
+    for (let i = 0; i < al.length; i++) for (let j = 0; j < al.length; j++) {
+      if ((i === 0 && j === 0) || (i === 0 && j === al.length - 1) || (i === al.length - 1 && j === 0)) continue;
+      for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++)
+        setF(al[i] + dx, al[j] + dy, Math.max(Math.abs(dx), Math.abs(dy)) !== 1);
+    }
+    const formatBits = (mask) => {
+      const d = (FORMAT_M << 3) | mask;
+      let r = d;
+      for (let i = 0; i < 10; i++) r = (r << 1) ^ ((r >>> 9) * 0x537);
+      const b = ((d << 10) | r) ^ 0x5412;
+      const bit = (i) => ((b >>> i) & 1) !== 0;
+      for (let i = 0; i <= 5; i++) setF(8, i, bit(i));
+      setF(8, 7, bit(6)); setF(8, 8, bit(7)); setF(7, 8, bit(8));
+      for (let i = 9; i < 15; i++) setF(14 - i, 8, bit(i));
+      for (let i = 0; i < 8; i++) setF(size - 1 - i, 8, bit(i));
+      for (let i = 8; i < 15; i++) setF(8, size - 15 + i, bit(i));
+      setF(8, size - 8, true);
+    };
+    formatBits(0);
+    if (ver >= 7) {
+      let r = ver;
+      for (let i = 0; i < 12; i++) r = (r << 1) ^ ((r >>> 11) * 0x1F25);
+      const b = (ver << 12) | r;
+      for (let i = 0; i < 18; i++) {
+        const dark = ((b >>> i) & 1) !== 0, a = size - 11 + i % 3, c = Math.floor(i / 3);
+        setF(a, c, dark); setF(c, a, dark);
+      }
+    }
+
+    // Codewords in the zigzag.
+    let bi = 0;
+    for (let right = size - 1; right >= 1; right -= 2) {
+      if (right === 6) right = 5;
+      for (let v = 0; v < size; v++) for (let j = 0; j < 2; j++) {
+        const x = right - j, up = ((right + 1) & 2) === 0, y = up ? size - 1 - v : v;
+        if (!fn[y][x] && bi < codewords.length * 8) {
+          m[y][x] = ((codewords[bi >>> 3] >>> (7 - (bi & 7))) & 1) !== 0;
+          bi++;
+        }
+      }
+    }
+
+    const MASKS = [
+      (x, y) => (x + y) % 2 === 0, (x, y) => y % 2 === 0, (x) => x % 3 === 0,
+      (x, y) => (x + y) % 3 === 0, (x, y) => (Math.floor(x / 3) + Math.floor(y / 2)) % 2 === 0,
+      (x, y) => x * y % 2 + x * y % 3 === 0, (x, y) => (x * y % 2 + x * y % 3) % 2 === 0,
+      (x, y) => ((x + y) % 2 + x * y % 3) % 2 === 0,
+    ];
+    const applyMask = (k) => {
+      for (let y = 0; y < size; y++) for (let x = 0; x < size; x++)
+        if (!fn[y][x] && MASKS[k](x, y)) m[y][x] = !m[y][x];
+    };
+    // Any mask is valid; the penalty only steers away from patterns that are
+    // hard for a camera (long runs, blocks, finder look-alikes, imbalance).
+    const penalty = () => {
+      let p = 0, dark = 0;
+      const line = (get) => {
+        let run = 1;
+        for (let i = 1; i <= size; i++) {
+          if (i < size && get(i) === get(i - 1)) run++;
+          else { if (run >= 5) p += run - 2; run = 1; }
+        }
+        const pat = [1, 0, 1, 1, 1, 0, 1];
+        for (let i = 0; i + 7 <= size; i++) {
+          if (!pat.every((v, k) => (get(i + k) ? 1 : 0) === v)) continue;
+          const light = (a, b) => { for (let k = a; k < b; k++) if (k >= 0 && k < size && get(k)) return false; return true; };
+          if (light(i - 4, i) || light(i + 7, i + 11)) p += 40;
+        }
+      };
+      for (let y = 0; y < size; y++) line((i) => m[y][i]);
+      for (let x = 0; x < size; x++) line((i) => m[i][x]);
+      for (let y = 0; y < size - 1; y++) for (let x = 0; x < size - 1; x++) {
+        const c = m[y][x];
+        if (c === m[y][x + 1] && c === m[y + 1][x] && c === m[y + 1][x + 1]) p += 3;
+      }
+      for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) if (m[y][x]) dark++;
+      const total = size * size;
+      p += (Math.ceil(Math.abs(dark * 20 - total * 10) / total) - 1) * 10;
+      return p;
+    };
+    let best = 0, bestScore = Infinity;
+    for (let k = 0; k < 8; k++) {
+      applyMask(k); formatBits(k);
+      const s = penalty();
+      if (s < bestScore) { bestScore = s; best = k; }
+      applyMask(k);
+    }
+    applyMask(best); formatBits(best);
+    return m;
+  }
+
+  /** Draw onto a canvas: dark on white with the standard 4-module quiet zone. */
+  function draw(canvas, text, px) {
+    const m = encode(text), n = m.length + 8;
+    const cell = Math.max(2, Math.floor(px / n));
+    canvas.width = canvas.height = n * cell;
+    const g = canvas.getContext("2d");
+    g.fillStyle = "#fff"; g.fillRect(0, 0, canvas.width, canvas.height);
+    g.fillStyle = "#000";
+    m.forEach((row, y) => row.forEach((on, x) => {
+      if (on) g.fillRect((x + 4) * cell, (y + 4) * cell, cell, cell);
+    }));
+  }
+
+  return { encode, draw };
+})();
+/* QR:END */
+
+// ---------------------------------------------------------------------------
+// Browser client: the switch, the link, the QR sheet. Shared verbatim by both
+// front ends, which use the same element ids for it.
+// ---------------------------------------------------------------------------
+let webState = { on: false, urls: [] };
+let qrIp = null, qrReturn = null;
+const webApi = () => window.pywebview && window.pywebview.api;
+
+window.setWeb = st => {
+  webState = st || { on: false, urls: [] };
+  const urls = webState.urls || [];
+  const first = urls[0];
+  const t = $('webToggle');
+  t.setAttribute('aria-checked', webState.on ? 'true' : 'false');
+  t.disabled = false;
+  $('webUrlRow').hidden = !(webState.on && first);
+  $('webUrl').textContent = first ? first.url : '';
+  $('webUrl').title = first ? first.url : '';
+  const note = $('webNote');
+  note.classList.toggle('err', !!webState.error);
+  note.textContent = webState.error
+    ? 'Could not start: ' + webState.error
+    : !webState.on ? 'For phones without the app, such as an iPhone.'
+    : first ? 'On. Open this link on the phone' + (first.name ? ' (via ' + first.name + ')' : '') + '.'
+    : 'On, but this PC has no LAN address. Connect it to the Wi-Fi the phone uses.';
+  if (!webState.on || !first) closeQr();
+  else if (!$('qrSheet').hidden) openQr(qrIp);   // new token after a restart
+};
+
+$('webToggle').addEventListener('click', async () => {
+  const api = webApi();
+  if (!api) return;
+  const t = $('webToggle');
+  t.disabled = true;
+  try { window.setWeb(await api.set_web(!webState.on)); }
+  catch (e) { t.disabled = false; }
+});
+
+async function copyText(text, btn) {
+  let ok = false;
+  try {
+    await navigator.clipboard.writeText(text);
+    ok = true;
+  } catch (e) {
+    // The async clipboard can be refused inside the WebView; the old
+    // selection-based copy still works there.
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    try { ok = document.execCommand('copy'); } catch (e2) { ok = false; }
+    ta.remove();
+  }
+  if (btn) {
+    const was = btn.dataset.label || btn.textContent;
+    btn.dataset.label = was;
+    btn.textContent = ok ? 'Copied' : 'Copy failed';
+    setTimeout(() => { btn.textContent = was; }, 1400);
+  }
+}
+
+$('webCopy').addEventListener('click', e => {
+  const first = (webState.urls || [])[0];
+  if (first) copyText(first.url, e.currentTarget);
+});
+
+function openQr(ip) {
+  const urls = webState.urls || [];
+  if (!urls.length) return;
+  const u = urls.find(x => x.ip === ip) || urls[0];
+  qrIp = u.ip;
+  $('qrUrl').textContent = u.url;
+  try { QR.draw($('qrCanvas'), u.url, 440); } catch (e) { /* link too long; the text is still there */ }
+
+  // Every other adapter's link, in case the first guess is not the phone's
+  // network (a VPN, a second NIC, a virtual switch).
+  const others = $('qrOthers');
+  others.querySelectorAll('button').forEach(b => b.remove());
+  for (const o of urls) {
+    if (o.ip === u.ip) continue;
+    const b = document.createElement('button');
+    b.className = 'ghost';
+    b.textContent = o.ip + (o.name ? '  ·  ' + o.name : '');
+    b.addEventListener('click', () => openQr(o.ip));
+    others.appendChild(b);
+  }
+  others.hidden = urls.length < 2;
+
+  const sheet = $('qrSheet');
+  if (sheet.hidden) {
+    qrReturn = document.activeElement;
+    sheet.hidden = false;
+    $('qrClose').focus();
+  }
+}
+
+function closeQr() {
+  const sheet = $('qrSheet');
+  if (sheet.hidden) return;
+  sheet.hidden = true;
+  if (qrReturn && qrReturn.focus) qrReturn.focus();
+  qrReturn = null;
+}
+
+$('webQr').addEventListener('click', () => openQr(qrIp));
+$('qrClose').addEventListener('click', closeQr);
+$('qrSheet').addEventListener('click', e => { if (e.target === e.currentTarget) closeQr(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeQr(); });
+
+/* PAIRING:BEGIN */
+// ---------------------------------------------------------------------------
+// Pairing: the prompt for a phone asking to pair, and the paired-phones list.
+// Shared verbatim by both front ends, which use the same element ids for it.
+// Python pushes setPairing (the open prompt, or null) and setPhones.
+// ---------------------------------------------------------------------------
+let pairPrompt = null, pairTimer = 0, pairArmTimer = 0, pairReturn = null;
+let phoneList = [], phonesReturn = null;
+const pairApi = () => window.pywebview && window.pywebview.api;
+
+function hideSheet(id, back) {
+  const sheet = $(id);
+  if (sheet.hidden) return;
+  sheet.hidden = true;
+  if (back && back.focus) back.focus();
+}
+
+window.setPairing = pr => {
+  if (!pr) {
+    pairPrompt = null;
+    clearInterval(pairTimer);
+    clearTimeout(pairArmTimer);
+    hideSheet('pairSheet', pairReturn);
+    pairReturn = null;
+    return;
+  }
+  if (pairPrompt && pairPrompt.id === pr.id) return;   // already showing this one
+  pairPrompt = pr;
+  $('pairName').textContent = pr.name + ' wants to connect to this PC';
+  $('pairCode').textContent = pr.code;
+  $('pairCode').setAttribute('aria-label', 'Code ' + pr.code.split('').join(' '));
+  const deadline = performance.now() + pr.seconds * 1000;
+  const tick = () => {
+    const left = Math.max(0, Math.ceil((deadline - performance.now()) / 1000));
+    $('pairCount').textContent = left + ' s left';
+  };
+  tick();
+  clearInterval(pairTimer);
+  pairTimer = setInterval(tick, 250);
+  // Allow arms a moment after the prompt appears, so a click already on its
+  // way to whatever was under the pointer cannot approve a request that
+  // popped up beneath it.
+  $('pairAllow').disabled = true;
+  $('pairDeny').disabled = false;
+  clearTimeout(pairArmTimer);
+  pairArmTimer = setTimeout(() => { $('pairAllow').disabled = false; }, 1000);
+  const sheet = $('pairSheet');
+  if (sheet.hidden) {
+    pairReturn = document.activeElement;
+    closeQr();
+    closePhones();
+    sheet.hidden = false;
+    $('pairDeny').focus();
+  }
+};
+
+async function answerPairing(allow) {
+  const pr = pairPrompt, api = pairApi();
+  if (!pr || !api) return;
+  $('pairAllow').disabled = $('pairDeny').disabled = true;
+  try {
+    await api.pair_answer(pr.id, allow);
+    // Answered, or already gone (timed out): either way this prompt is over.
+    // A newer one, if any, is pushed again by Python.
+    if (pairPrompt === pr) window.setPairing(null);
+  } catch (e) {
+    $('pairDeny').disabled = false;
+    $('pairAllow').disabled = false;
+  }
+}
+
+window.setPhones = list => {
+  phoneList = list || [];
+  $('phonesBtn').textContent = 'Paired phones (' + phoneList.length + ')';
+  const ul = $('phonesList');
+  ul.replaceChildren();
+  for (const ph of phoneList) {
+    const li = document.createElement('li');
+    const who = document.createElement('span');
+    who.className = 'who';
+    who.textContent = ph.name;
+    const when = document.createElement('span');
+    when.className = 'when';
+    when.textContent = 'paired ' + String(ph.paired_at || '').slice(0, 10);
+    const b = document.createElement('button');
+    b.className = 'ghost key';
+    b.textContent = 'Remove';
+    b.setAttribute('aria-label', 'Remove ' + ph.name);
+    // Two clicks, so a stray one cannot unpair the phone in someone's hand.
+    let armed = 0;
+    b.addEventListener('click', async () => {
+      if (!armed) {
+        b.textContent = 'Confirm';
+        armed = setTimeout(() => { armed = 0; b.textContent = 'Remove'; }, 3000);
+        return;
+      }
+      clearTimeout(armed);
+      const api = pairApi();
+      if (!api) return;
+      b.disabled = true;
+      try { window.setPhones(await api.remove_phone(ph.id)); }
+      catch (e) { b.disabled = false; }
+    });
+    li.append(who, when, b);
+    ul.appendChild(li);
+  }
+  $('phonesEmpty').hidden = phoneList.length > 0;
+};
+
+function openPhones() {
+  const sheet = $('phonesSheet');
+  if (!sheet.hidden) return;
+  phonesReturn = document.activeElement;
+  sheet.hidden = false;
+  $('phonesClose').focus();
+}
+
+function closePhones() {
+  hideSheet('phonesSheet', phonesReturn);
+  phonesReturn = null;
+}
+
+$('pairAllow').addEventListener('click', () => answerPairing(true));
+$('pairDeny').addEventListener('click', () => answerPairing(false));
+$('phonesBtn').addEventListener('click', openPhones);
+$('phonesClose').addEventListener('click', closePhones);
+$('phonesSheet').addEventListener('click', e => { if (e.target === e.currentTarget) closePhones(); });
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  if (!$('pairSheet').hidden) answerPairing(false);   // Escape means no
+  else closePhones();
+});
+/* PAIRING:END */
+
+$('logBtn').addEventListener('click', () => {
+  const api = webApi();
+  if (api) api.open_log_folder();
+});
+</script>

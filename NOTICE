@@ -1,0 +1,70 @@
+LudusCtrl receiver
+Copyright (C) 2026 Josip Parlov (@parl0v)
+https://github.com/parl0v
+https://parl0v.github.io/ludusctrl/
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU Affero General Public License as published by the Free
+Software Foundation, either version 3 of the License, or (at your option) any
+later version, with the additional terms below.
+
+This program is distributed in the hope that it will be useful, but WITHOUT
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License, in the
+file LICENSE, for more details.
+
+
+ADDITIONAL TERMS (GNU AGPL version 3, section 7)
+
+1. Author attribution, under section 7(b).
+
+   Every copy and every modified version of this program, and every work
+   based on it, in source or object form, must preserve the attribution
+
+       Josip Parlov (@parl0v)
+
+   as the original author:
+
+   a. in this NOTICE file, which must be distributed with it;
+   b. in the copyright notices at the top of the source files; and
+   c. in the Appropriate Legal Notices that the program's interactive user
+      interfaces display, such as an about screen, a credits line or the
+      installer.
+
+   A modified version may add its own authors next to this attribution. It
+   must not remove it, shorten it, or imply that Josip Parlov wrote or
+   endorses the modifications.
+
+2. Names, under section 7(e).
+
+   This licence grants no rights to use the name "LudusCtrl", or the
+   LudusCtrl logo, as the name or logo of a modified version. A modified
+   version that is distributed must carry a different name. Saying that it is
+   "based on LudusCtrl by Josip Parlov (@parl0v)" is required by term 1 and is
+   always allowed.
+
+3. Modified versions must be marked as modified, under section 7(c), so they
+   are not mistaken for the original.
+
+
+CONTRIBUTIONS
+
+By submitting a contribution to this program (a pull request, patch or any
+other change sent to its author or repository), you confirm that you wrote it
+or otherwise have the right to submit it, and you agree that:
+
+  a. it is licensed to everyone under the same terms as this program; and
+  b. you also grant Josip Parlov a perpetual, worldwide, non-exclusive,
+     royalty-free, irrevocable licence to use, copy, modify, sub-licence and
+     distribute your contribution, as part of this program or of works based
+     on it, under any licence terms, including terms other than the GNU AGPL.
+
+You keep the copyright in your contribution, and you will be credited as its
+author in the project's history.
+
+
+Third-party components distributed with the program keep their own licences,
+reproduced in THIRD-PARTY-NOTICES.
+
+The LudusCtrl Android app is a separate program. It is not covered by this
+licence and its source is not published.

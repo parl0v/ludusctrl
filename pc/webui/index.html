@@ -1,0 +1,1220 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later
+     Copyright (C) 2026 Josip Parlov (@parl0v). See NOTICE for the attribution terms. -->
+<meta charset="utf-8">
+<title>LudusCtrl</title>
+<style>
+  /* Same tokens as the Android app's colors.xml. */
+  :root {
+    --bg:#0B0E14; --surface:#141922; --surface-high:#1C2330; --edge:#2B3444;
+    --fg:#E8EDF5; --muted:#8A94A6; --accent:#2E9BFF; --on-accent:#0B0E14;
+    --live:#3FD68A; --waiting:#E8B33F; --dead:#5A6474;
+    --r:14px;
+  }
+  * { box-sizing:border-box; }
+  html, body { height:100%; }
+  body {
+    margin:0; background:var(--bg); color:var(--fg);
+    font-family:"Segoe UI Variable Display","Segoe UI",system-ui,sans-serif;
+    font-size:14px; overflow:hidden;
+    /* The whole window is the drag handle; pywebview has no native title bar. */
+    -webkit-user-select:none; user-select:none;
+  }
+  #app { display:flex; flex-direction:column; height:100%; min-height:0;
+       padding:20px 20px 18px; gap:11px; overflow:hidden; }
+
+  /* Title bar ------------------------------------------------------------ */
+  header { display:flex; align-items:center; gap:12px; flex:0 0 auto; }
+  .brand h1 { margin:0; font-size:19px; font-weight:600; letter-spacing:.02em; }
+  .brand p  { margin:2px 0 0; font-size:12px; color:var(--muted); }
+  .spacer { flex:1; }
+  .status {
+    display:flex; align-items:center; gap:7px; font-size:11px; font-weight:600;
+    letter-spacing:.11em; color:var(--muted);
+  }
+  .dot {
+    width:9px; height:9px; border-radius:50%; background:var(--dead);
+    transition:background .25s, box-shadow .25s;
+  }
+  .status.live   { color:var(--live); }
+  .status.live   .dot { background:var(--live); box-shadow:0 0 0 4px color-mix(in srgb, var(--live) 22%, transparent); }
+  .status.wait   { color:var(--waiting); }
+  .status.wait   .dot { background:var(--waiting); box-shadow:0 0 0 4px color-mix(in srgb, var(--waiting) 20%, transparent); }
+  .status.err    { color:var(--waiting); }
+
+  /* Cards ---------------------------------------------------------------- */
+  .card {
+    background:var(--surface); border:1px solid var(--edge); border-radius:var(--r);
+  }
+
+  #padwrap {
+    display:flex; align-items:center; justify-content:center;
+    flex:1 1 auto; min-height:90px;
+  }
+  /* aspect-ratio plus both max constraints lets the box fit whichever axis
+     runs out first, so the pad stays whole at any window size. */
+  canvas {
+    display:block; aspect-ratio:400 / 250;
+    width:auto; height:auto; max-width:min(520px, 100%); max-height:100%;
+  }
+
+  .stats { display:flex; padding:13px 0; }
+  .stat { flex:1; text-align:center; position:relative; }
+  .stat + .stat::before {
+    content:""; position:absolute; left:0; top:2px; bottom:2px;
+    width:1px; background:var(--edge);
+  }
+  .stat .v {
+    font-family:"Cascadia Mono",Consolas,ui-monospace,monospace;
+    font-size:16px; font-variant-numeric:tabular-nums;
+  }
+  .stat .l {
+    font-size:9.5px; letter-spacing:.09em; text-transform:uppercase;
+    color:var(--muted); margin-top:3px;
+  }
+
+  .pad-addr { padding:14px 16px; }
+  .label { font-size:9.5px; letter-spacing:.09em; text-transform:uppercase; color:var(--muted); }
+  .addr {
+    font-family:"Cascadia Mono",Consolas,ui-monospace,monospace;
+    font-size:19px; margin-top:3px; -webkit-user-select:text; user-select:text;
+  }
+  .hint { font-size:11px; color:var(--muted); margin-top:6px; line-height:1.45; }
+  .hint code { color:var(--muted); opacity:.75; }
+
+  /* Segmented pad-type control ------------------------------------------- */
+  .seg { display:flex; gap:6px; margin-top:9px; }
+  .seg button {
+    flex:1; padding:9px 10px; border-radius:9px; cursor:pointer;
+    border:1px solid var(--edge); background:var(--surface-high);
+    color:var(--muted); font-family:inherit; font-size:13px;
+    transition:background .18s, color .18s, border-color .18s, transform .08s;
+  }
+  .seg button:hover:not(.on) { border-color:var(--muted); color:var(--fg); }
+  .seg button:active { transform:scale(.98); }
+  .seg button.on {
+    background:var(--accent); border-color:var(--accent); color:var(--on-accent);
+    font-weight:600;
+  }
+  .seg button[disabled] { opacity:.5; cursor:default; }
+  button:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+
+  .brand h1 .ver { font-size:11px; font-weight:400; color:var(--muted); letter-spacing:.04em; margin-left:6px; }
+  .ghost {
+    border:1px solid var(--edge); background:transparent; color:var(--muted);
+    font-family:inherit; font-size:11px; padding:4px 9px; border-radius:7px; cursor:pointer;
+    flex:none;
+  }
+  .ghost:hover { color:var(--fg); border-color:var(--muted); }
+
+  /* Browser client ------------------------------------------------------- */
+  .web { padding:11px 16px; flex:0 0 auto; }
+  .webrow { display:flex; align-items:center; gap:12px; }
+  .webrow .grow { flex:1; min-width:0; }
+  .webnote { font-size:11px; color:var(--muted); margin-top:2px; }
+  .webnote.err { color:var(--waiting); }
+  /* An on/off switch, since that is what this is; role="switch" says so to
+     a screen reader as well. */
+  .toggle {
+    flex:none; width:40px; height:22px; border-radius:11px; cursor:pointer;
+    border:1px solid var(--edge); background:var(--surface-high); position:relative;
+    transition:background .18s, border-color .18s; padding:0;
+  }
+  .toggle::after {
+    content:""; position:absolute; top:2px; left:2px; width:16px; height:16px;
+    border-radius:50%; background:var(--muted); transition:transform .18s, background .18s;
+  }
+  .toggle[aria-checked="true"] { background:var(--accent); border-color:var(--accent); }
+  .toggle[aria-checked="true"]::after { transform:translateX(18px); background:var(--on-accent); }
+  .toggle[disabled] { opacity:.5; cursor:default; }
+  .urlrow { display:flex; align-items:center; gap:6px; margin-top:8px; }
+  .urlrow[hidden] { display:none; }
+  .url {
+    flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    font-family:"Cascadia Mono",Consolas,ui-monospace,monospace; font-size:12px;
+    -webkit-user-select:all; user-select:all;
+  }
+
+  /* Paired phones row ------------------------------------------------------ */
+  .phonerow { display:flex; align-items:center; gap:10px; margin-top:10px; }
+  .phonerow .grow {
+    flex:1; min-width:0; font-size:11px; color:var(--muted);
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+
+  /* QR, pairing and phones sheets ---------------------------------------- */
+  #qrSheet, #pairSheet, #phonesSheet {
+    position:fixed; inset:0; z-index:10; display:flex; align-items:center; justify-content:center;
+    background:rgba(5,7,10,.78); padding:16px;
+  }
+  /* A pairing request goes over anything else that is open. */
+  #pairSheet { z-index:20; }
+  #qrSheet[hidden], #pairSheet[hidden], #phonesSheet[hidden] { display:none; }
+  .sheet.pair { text-align:center; }
+  .pairname { font-size:14px; margin-top:2px; word-break:break-word; }
+  .paircode {
+    font-family:"Cascadia Mono",Consolas,ui-monospace,monospace; font-size:44px;
+    letter-spacing:.08em; margin:12px 0 6px; color:var(--fg); font-variant-numeric:tabular-nums;
+  }
+  .pairhelp { font-size:12px; color:var(--muted); line-height:1.5; margin:0; }
+  .sheet .actions { gap:8px; align-items:center; }
+  .sheet .actions .count { flex:1; text-align:left; font-size:11px; color:var(--muted);
+    font-variant-numeric:tabular-nums; }
+  .btn {
+    font-family:inherit; font-size:13px; padding:8px 16px; border-radius:9px; cursor:pointer;
+    border:1px solid var(--edge); background:var(--surface-high); color:var(--fg);
+  }
+  .btn.primary { background:var(--accent); border-color:var(--accent); color:var(--on-accent); font-weight:600; }
+  .btn[disabled] { opacity:.45; cursor:default; }
+  #phonesEmpty[hidden] { display:none; }
+  #phonesList { list-style:none; margin:8px 0 0; padding:0; }
+  #phonesList li { display:flex; align-items:center; gap:10px; padding:7px 0; border-top:1px solid var(--edge); }
+  #phonesList .who { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #phonesList .when { font-size:11px; color:var(--muted); }
+  .sheet {
+    background:var(--surface); border:1px solid var(--edge); border-radius:var(--r);
+    padding:16px; width:min(420px, 100%); max-height:100%; overflow:auto;
+    -webkit-user-select:text; user-select:text;
+  }
+  .sheet h2 { margin:0 0 4px; font-size:15px; font-weight:600; }
+  .sheet .url { white-space:normal; word-break:break-all; font-size:11px; color:var(--muted); }
+  .sheet canvas.qr {
+    display:block; margin:10px auto; width:min(220px, 45vh); height:auto; aspect-ratio:1;
+    max-width:100%; max-height:none; border-radius:6px; image-rendering:pixelated;
+  }
+  .sheet ol { margin:8px 0 0; padding-left:18px; font-size:12px; color:var(--muted); line-height:1.5; }
+  .sheet .others { margin-top:10px; }
+  .sheet .others[hidden] { display:none; }
+  .sheet .others button { display:block; margin-top:4px; width:100%; text-align:left; }
+  .sheet .actions { display:flex; justify-content:flex-end; margin-top:12px; }
+
+  /* Log ------------------------------------------------------------------ */
+  #log {
+    flex:0 0 auto; height:82px; overflow-y:auto; padding:11px 14px;
+    font-family:"Cascadia Mono",Consolas,ui-monospace,monospace;
+    font-size:11.5px; color:var(--muted); line-height:1.65;
+    -webkit-user-select:text; user-select:text;
+  }
+  #log div { white-space:pre-wrap; word-break:break-word; }
+  #log::-webkit-scrollbar { width:8px; }
+  #log::-webkit-scrollbar-thumb { background:var(--edge); border-radius:4px; }
+  #log::-webkit-scrollbar-track { background:transparent; }
+
+  @media (max-height: 700px) {
+    #app { gap:9px; padding:14px 16px 12px; }
+    .brand h1 { font-size:17px; }
+    #log { height:62px; }
+    .stats { padding:10px 0; }
+    .pad-addr { padding:11px 13px; }
+    .addr { font-size:17px; }
+  }
+  @media (max-height: 560px) {
+    #log { display:none; }
+    .hint { display:none; }
+    .webnote:not(.err) { display:none; }
+    #padwrap { min-height:70px; }
+  }
+  @media (max-width: 470px) {
+    .stat .v { font-size:14px; }
+    .stat .l { font-size:8.5px; letter-spacing:.06em; }
+    .seg { flex-direction:column; }
+    .addr { font-size:16px; }
+  }
+</style>
+
+<div id="app">
+  <header>
+    <div class="brand">
+      <h1 title="LudusCtrl by Josip Parlov (@parl0v). Free software under the GNU AGPL 3.0 or later, with no warranty; see LICENSE and NOTICE.">LudusCtrl<span class="ver" id="ver"></span></h1>
+      <p id="sub">starting…</p>
+    </div>
+    <div class="spacer"></div>
+    <button class="ghost" id="logBtn" title="Open the folder with ludusctrl.log">Log folder</button>
+    <div class="status" id="status" aria-live="polite"><span class="dot"></span><span id="statusText">WAITING</span></div>
+  </header>
+
+  <div id="padwrap"><canvas id="pad" width="1040" height="650" role="img"
+       aria-label="Live view of the controller's buttons and sticks"></canvas></div>
+
+  <div class="card stats">
+    <div class="stat"><div class="v" id="sClient">—</div><div class="l">Client</div></div>
+    <div class="stat"><div class="v" id="sPackets">—</div><div class="l">Packets</div></div>
+    <div class="stat"><div class="v" id="sRate">—</div><div class="l">Throughput</div></div>
+  </div>
+
+  <div class="card pad-addr">
+    <div class="label">PC address</div>
+    <div class="addr" id="addr">—</div>
+    <div class="hint" id="addrHint"></div>
+    <div class="phonerow">
+      <span class="label">Phones</span>
+      <span class="grow" id="phonesNote" aria-live="polite">Waiting for a paired phone</span>
+      <button class="ghost" id="phonesBtn">Paired phones</button>
+    </div>
+
+    <div class="label" style="margin-top:13px">Pad type</div>
+    <div class="seg" role="group" aria-label="Pad type">
+      <button id="btnX360" data-kind="x360" aria-pressed="false">Xbox 360</button>
+      <button id="btnDs4" data-kind="ds4" aria-pressed="false">DualShock 4</button>
+    </div>
+    <div class="hint" id="padHint"></div>
+  </div>
+
+  <div class="card web">
+    <div class="webrow">
+      <div class="grow">
+        <div class="label" id="webLabel">Browser client</div>
+        <div class="webnote" id="webNote">For phones without the app, such as an iPhone.</div>
+      </div>
+      <button class="toggle" id="webToggle" role="switch" aria-checked="false"
+              aria-labelledby="webLabel"></button>
+    </div>
+    <div class="urlrow" id="webUrlRow" hidden>
+      <span class="url" id="webUrl"></span>
+      <button class="ghost" id="webCopy">Copy</button>
+      <button class="ghost" id="webQr">QR code</button>
+    </div>
+  </div>
+
+  <div class="card" id="log"></div>
+</div>
+
+<div id="qrSheet" hidden role="dialog" aria-modal="true" aria-labelledby="qrTitle">
+  <div class="sheet">
+    <h2 id="qrTitle">Open on the phone</h2>
+    <div class="url" id="qrUrl"></div>
+    <canvas class="qr" id="qrCanvas" role="img" aria-label="QR code of the link above"></canvas>
+    <ol>
+      <li>Scan this with the phone's camera. The phone must be on the same Wi-Fi as this PC.</li>
+      <li>The browser warns about the certificate once. On iPhone: Show Details, then visit this website.</li>
+      <li>Pair the controller with the phone over Bluetooth, then press Start link.</li>
+    </ol>
+    <p class="webnote">The link works until LudusCtrl is closed; the next start makes a new one.</p>
+    <div class="others" id="qrOthers" hidden>
+      <div class="label">Not loading? Try another network adapter</div>
+    </div>
+    <div class="actions"><button class="ghost" id="qrClose">Close</button></div>
+  </div>
+</div>
+
+<div id="pairSheet" hidden role="alertdialog" aria-modal="true" aria-labelledby="pairTitle"
+     aria-describedby="pairHelp">
+  <div class="sheet pair">
+    <h2 id="pairTitle">Pair a phone?</h2>
+    <div class="pairname" id="pairName"></div>
+    <div class="paircode" id="pairCode"></div>
+    <p class="pairhelp" id="pairHelp">Allow only if the phone shows exactly this code.
+      If it does not, or nobody just pressed Start link on a phone, deny.</p>
+    <div class="actions">
+      <span class="count" id="pairCount"></span>
+      <button class="btn ghost key" id="pairDeny">Deny</button>
+      <button class="btn primary key" id="pairAllow">Allow</button>
+    </div>
+  </div>
+</div>
+
+<div id="phonesSheet" hidden role="dialog" aria-modal="true" aria-labelledby="phonesTitle">
+  <div class="sheet">
+    <h2 id="phonesTitle">Paired phones</h2>
+    <p class="webnote" id="phonesEmpty">No phone is paired yet. Press Start link in the
+      app on the phone and this PC asks whether to pair it.</p>
+    <ul id="phonesList"></ul>
+    <p class="webnote">A removed phone has to pair again before it can connect.</p>
+    <div class="actions"><button class="ghost" id="phonesClose">Close</button></div>
+  </div>
+</div>
+
+<script>
+// ---------------------------------------------------------------------------
+// Pad rendering. Same 400x250 design space and coordinates as PadView.kt, so
+// the desktop and the phone draw the identical controller.
+// ---------------------------------------------------------------------------
+const VW = 400, VH = 250;
+const STICK_TRAVEL = 14, STICK_OUTER = 26, STICK_INNER = 11;
+
+// Easing as a rate per second, not a fraction per frame. A per-frame fraction
+// animates at whatever the refresh rate happens to be, so this page at 240 Hz
+// and the phone at 60 Hz would ease at visibly different speeds from the same
+// constants. PadView.kt uses these exact rates.
+const GLOW_RATE = 38;   // ~80 ms to settle
+const MOVE_RATE = 55;   // ~55 ms to settle
+let easeK = { glow: 0.3, move: 0.4 };
+
+const B = {
+  UP:0x0001, DOWN:0x0002, LEFT:0x0004, RIGHT:0x0008,
+  OPTIONS:0x0010, CREATE:0x0020, L3:0x0040, R3:0x0080,
+  L1:0x0100, R1:0x0200, PS:0x0400,
+  CROSS:0x1000, CIRCLE:0x2000, SQUARE:0x4000, TRIANGLE:0x8000,
+};
+
+// Pad layout, from byte 19 of the input packet. Cosmetic only: the button mask
+// is positional and identical across vendors, so this chooses glyphs and
+// control positions, never a remapping.
+const LAYOUTS = {
+  1: { face:{ n:'△', e:'○', s:'✕', w:'□' },
+       sh:['L1','R1'], tr:['L2','R2'], guide:'PS',
+       body:'ps', guideAt:[200,150], pillL:[148,73], pillR:[252,73],
+       ls:[148,148], rs:[252,148], dpad:[100,105], faceAt:[300,105],
+       touchpad:true },
+  // Xbox puts the left stick where PlayStation puts the d-pad, and the d-pad
+  // down where PlayStation puts the left stick.
+  2: { face:{ n:'Y', e:'B', s:'A', w:'X' },
+       sh:['LB','RB'], tr:['LT','RT'], guide:'❖',
+       body:'xbox', guideAt:[200,92], pillL:[176,112], pillR:[224,112],
+       ls:[104,98], rs:[246,150], dpad:[146,150], faceAt:[296,98],
+       touchpad:false },
+  // Nintendo letters east/south the opposite way round, so the same bit draws
+  // a different letter.
+  3: { face:{ n:'X', e:'A', s:'B', w:'Y' },
+       sh:['L','R'], tr:['ZL','ZR'], guide:'⌂',
+       body:'nintendo', guideAt:[200,92], pillL:[176,112], pillR:[224,112],
+       ls:[104,98], rs:[246,150], dpad:[146,150], faceAt:[296,98],
+       touchpad:false },
+  // Unrecognised pad. Most generic Bluetooth pads print the letters Android
+  // itself reports (BUTTON_A/B/X/Y, L1/L2), so those are the least wrong
+  // guess; drawing a DualSense promised a touchpad the pad does not have.
+  0: { face:{ n:'Y', e:'B', s:'A', w:'X' },
+       sh:['L1','R1'], tr:['L2','R2'], guide:'●',
+       body:'generic', guideAt:[200,92], pillL:[176,112], pillR:[224,112],
+       ls:[104,98], rs:[246,150], dpad:[146,150], faceAt:[296,98],
+       touchpad:false },
+};
+
+// Four silhouettes, all mirrored about x=200. The Xbox shell is not a
+// relabelled DualSense: its top edge dips in the middle between two shoulder
+// humps, and the grips are longer and swept further out. The Nintendo shell is
+// rounder, with a flat top and short, full grips under a lower waist. The
+// generic one is deliberately plain, an arched top over straight-down grips,
+// so an unknown pad does not look like any vendor's.
+function bodyPath(g, style) {
+  g.beginPath();
+  if (style === 'nintendo') {
+    g.moveTo(94, 54); g.lineTo(306, 54);
+    g.bezierCurveTo(346, 54, 372, 78, 376, 116);
+    g.bezierCurveTo(380, 160, 372, 204, 346, 222);
+    g.bezierCurveTo(322, 238, 286, 236, 274, 212);
+    g.bezierCurveTo(268, 200, 256, 192, 236, 190);
+    g.bezierCurveTo(216, 188, 184, 188, 164, 190);
+    g.bezierCurveTo(144, 192, 132, 200, 126, 212);
+    g.bezierCurveTo(114, 236, 78, 238, 54, 222);
+    g.bezierCurveTo(28, 204, 20, 160, 24, 116);
+    g.bezierCurveTo(28, 78, 54, 54, 94, 54);
+  } else if (style === 'generic') {
+    g.moveTo(200, 50);
+    g.bezierCurveTo(250, 50, 300, 53, 330, 58);
+    g.bezierCurveTo(360, 63, 374, 88, 374, 124);
+    g.bezierCurveTo(374, 160, 366, 190, 356, 212);
+    g.bezierCurveTo(344, 238, 300, 242, 288, 214);
+    g.bezierCurveTo(282, 200, 276, 186, 256, 186);
+    g.lineTo(144, 186);
+    g.bezierCurveTo(124, 186, 118, 200, 112, 214);
+    g.bezierCurveTo(100, 242, 56, 238, 44, 212);
+    g.bezierCurveTo(34, 190, 26, 160, 26, 124);
+    g.bezierCurveTo(26, 88, 40, 63, 70, 58);
+    g.bezierCurveTo(100, 53, 150, 50, 200, 50);
+  } else if (style === 'xbox') {
+    g.moveTo(200, 74);
+    g.bezierCurveTo(234, 58, 270, 50, 302, 52);
+    g.bezierCurveTo(342, 54, 368, 78, 372, 120);
+    g.bezierCurveTo(378, 172, 360, 224, 320, 234);
+    g.bezierCurveTo(294, 240, 272, 218, 260, 194);
+    g.bezierCurveTo(251, 180, 238, 174, 220, 174);
+    g.lineTo(180, 174);
+    g.bezierCurveTo(162, 174, 149, 180, 140, 194);
+    g.bezierCurveTo(130, 220, 108, 241, 80, 234);
+    g.bezierCurveTo(40, 224, 22, 172, 28, 120);
+    g.bezierCurveTo(32, 78, 58, 54, 98, 52);
+    g.bezierCurveTo(130, 50, 166, 58, 200, 74);
+  } else {
+    g.moveTo(72, 50); g.lineTo(328, 50);
+    g.bezierCurveTo(366, 50, 379, 86, 374, 124);
+    g.bezierCurveTo(368, 190, 342, 234, 308, 228);
+    g.bezierCurveTo(286, 222, 268, 196, 258, 170);
+    g.lineTo(142, 170);
+    g.bezierCurveTo(132, 196, 114, 222, 92, 228);
+    g.bezierCurveTo(58, 234, 32, 190, 26, 124);
+    g.bezierCurveTo(21, 86, 34, 50, 72, 50);
+  }
+  g.closePath();
+}
+
+
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+let C = {};
+function readTheme() {
+  C = {
+    accent: css('--accent'), idle: css('--surface-high'), body: css('--surface'),
+    edge: css('--edge'), onAccent: css('--on-accent'), muted: css('--muted'),
+  };
+}
+readTheme();
+
+const cv = document.getElementById('pad');
+const g = cv.getContext('2d');
+
+let state = { buttons:0, lx:0, ly:0, rx:0, ry:0, lt:0, rt:0, connected:false, layout:0 };
+
+// Smoothed values: the wire is discrete, but easing the drawn position makes
+// the pad feel like hardware rather than a step function.
+let vis = { lx:0, ly:0, rx:0, ry:0, lt:0, rt:0 };
+const glowAmt = {};   // per-control 0..1, eased so lights fade instead of snap
+
+// The canvas is redrawn only when something changed (dirty) or an ease has
+// not settled yet (animating). An idle pad used to be redrawn at the monitor's
+// full refresh rate, 240 times a second on a gaming display, for nothing.
+let dirty = true, animating = false;
+
+function ease(cur, target, k) {
+  const next = cur + (target - cur) * k;
+  if (Math.abs(target - next) < 0.001) return target;
+  animating = true;
+  return next;
+}
+
+function resize() {
+  const rect = cv.getBoundingClientRect();
+  if (!rect.width) return;
+  const dpr = window.devicePixelRatio || 1;
+  const w = Math.max(1, Math.round(rect.width * dpr));
+  if (cv.width === w) return;           // avoid clearing the canvas for nothing
+  cv.width = w;
+  cv.height = Math.round(w * VH / VW);
+  dirty = true;
+}
+new ResizeObserver(resize).observe(cv);
+
+function draw() {
+  const s = cv.width / VW;
+  g.setTransform(s, 0, 0, s, 0, 0);
+  g.clearRect(0, 0, VW, VH);
+
+  const b = state.buttons;
+  const L = LAYOUTS[state.layout] || LAYOUTS[0];
+  const lit = (key, on) => {
+    glowAmt[key] = ease(glowAmt[key] || 0, on ? 1 : 0, easeK.glow);
+    return glowAmt[key];
+  };
+  // Blend between the idle colour and the accent by amount t.
+  const mix = t => t < 0.02 ? C.idle : (t > 0.98 ? C.accent : blend(C.idle, C.accent, t));
+
+  const rr = (x, y, w, h, r) => { g.beginPath(); g.roundRect(x, y, w, h, r); };
+  const txt = (t, x, y, size, col) => {
+    g.fillStyle = col; g.font = `600 ${size}px "Segoe UI",system-ui,sans-serif`;
+    g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(t, x, y);
+  };
+
+  // Triggers -----------------------------------------------------------
+  const trig = (l, r, target, name) => {
+    const key = 'trig' + name;
+    vis[key] = ease(vis[key] || 0, target / 255, easeK.move);
+    const v = vis[key];
+    rr(l, 8, r - l, 18, 9); g.fillStyle = C.idle; g.fill();
+    if (v > 0.004) {
+      g.save(); rr(l, 8, r - l, 18, 9); g.clip();
+      g.fillStyle = C.accent; g.fillRect(l, 8, (r - l) * v, 18);
+      g.restore();
+    }
+    txt(name, (l + r) / 2, 17.5, 11, v > 0.5 ? C.onAccent : C.muted);
+  };
+  trig(62, 150, state.lt, L.tr[0]);
+  trig(250, 338, state.rt, L.tr[1]);
+
+  // Shoulders ----------------------------------------------------------
+  const pill = (l, r, on, name) => {
+    const t = lit(name, on);
+    rr(l, 34, r - l, 16, 8); g.fillStyle = mix(t); g.fill();
+    txt(name, (l + r) / 2, 42, 10.5, t > 0.5 ? C.onAccent : C.muted);
+  };
+  pill(62, 150, b & B.L1, L.sh[0]);
+  pill(250, 338, b & B.R1, L.sh[1]);
+
+  // Body ---------------------------------------------------------------
+  bodyPath(g, L.body);
+  g.fillStyle = C.body; g.fill();
+  g.strokeStyle = C.edge; g.lineWidth = 2; g.stroke();
+
+  // D-pad --------------------------------------------------------------
+  const cx = L.dpad[0], cy = L.dpad[1], arm = 16, half = 6.5;
+  g.fillStyle = C.idle;
+  g.fillRect(cx - half, cy - arm, half * 2, arm * 2);
+  g.fillRect(cx - arm, cy - half, arm * 2, half * 2);
+  const dp = (key, on, x, y, w, h) => {
+    const t = lit(key, on);
+    if (t < 0.02) return;
+    g.fillStyle = mix(t); g.fillRect(x, y, w, h);
+  };
+  dp('du', b & B.UP,    cx - half, cy - arm,  half * 2, arm - half);
+  dp('dd', b & B.DOWN,  cx - half, cy + half, half * 2, arm - half);
+  dp('dl', b & B.LEFT,  cx - arm,  cy - half, arm - half, half * 2);
+  dp('dr', b & B.RIGHT, cx + half, cy - half, arm - half, half * 2);
+
+  // Face buttons -------------------------------------------------------
+  const fx = L.faceAt[0], fy = L.faceAt[1], d = 23;
+  const face = (key, on, x, y, glyph) => {
+    const t = lit(key, on);
+    if (t > 0.02) {
+      const grd = g.createRadialGradient(x, y, 6, x, y, 19);
+      grd.addColorStop(0, withAlpha(C.accent, 0.42 * t));
+      grd.addColorStop(1, withAlpha(C.accent, 0));
+      g.fillStyle = grd;
+      g.beginPath(); g.arc(x, y, 19, 0, 7); g.fill();
+    }
+    g.beginPath(); g.arc(x, y, 11, 0, 7); g.fillStyle = mix(t); g.fill();
+    txt(glyph, x, y + 0.5, 12, t > 0.5 ? C.onAccent : C.muted);
+  };
+  face('tri', b & B.TRIANGLE, fx, fy - d, L.face.n);
+  face('cir', b & B.CIRCLE,   fx + d, fy, L.face.e);
+  face('cro', b & B.CROSS,    fx, fy + d, L.face.s);
+  face('sqr', b & B.SQUARE,   fx - d, fy, L.face.w);
+
+  // Touchpad, Create / Options, PS --------------------------------------
+  if (L.touchpad) { rr(165, 62, 70, 40, 7); g.fillStyle = C.idle; g.fill(); }
+  const smallPill = (key, on, l, t2, r, bm) => {
+    const t = lit(key, on);
+    rr(l, t2, r - l, bm - t2, 3); g.fillStyle = mix(t); g.fill();
+  };
+  smallPill('crt', b & B.CREATE,  L.pillL[0] - 8, L.pillL[1] - 7, L.pillL[0] + 8, L.pillL[1] + 7);
+  smallPill('opt', b & B.OPTIONS, L.pillR[0] - 8, L.pillR[1] - 7, L.pillR[0] + 8, L.pillR[1] + 7);
+
+  const tps = lit('ps', b & B.PS);
+  if (tps > 0.02) {
+    const grd = g.createRadialGradient(L.guideAt[0], L.guideAt[1], 5,
+                                       L.guideAt[0], L.guideAt[1], 17);
+    grd.addColorStop(0, withAlpha(C.accent, 0.42 * tps));
+    grd.addColorStop(1, withAlpha(C.accent, 0));
+    g.fillStyle = grd;
+    g.beginPath(); g.arc(L.guideAt[0], L.guideAt[1], 17, 0, 7); g.fill();
+  }
+  g.beginPath(); g.arc(L.guideAt[0], L.guideAt[1], 9, 0, 7);
+  g.fillStyle = mix(tps); g.fill();
+  txt(L.guide, L.guideAt[0], L.guideAt[1] + 0.5, 8.5, tps > 0.5 ? C.onAccent : C.muted);
+
+  // Sticks --------------------------------------------------------------
+  stick('l', L.ls[0], L.ls[1], state.lx, state.ly, b & B.L3);
+  stick('r', L.rs[0], L.rs[1], state.rx, state.ry, b & B.R3);
+
+  function stick(side, sx, sy, tx, ty, pressed) {
+    vis[side + 'x'] = ease(vis[side + 'x'], tx / 32767, easeK.move);
+    vis[side + 'y'] = ease(vis[side + 'y'], ty / 32767, easeK.move);
+    let nx = vis[side + 'x'], ny = vis[side + 'y'];
+    // Axes arrive per-axis, so a full diagonal is √2 long and would push the
+    // knob out of its well. Real sticks are circle-gated.
+    const m = Math.hypot(nx, ny);
+    if (m > 1) { nx /= m; ny /= m; }
+
+    const hx = sx + nx * STICK_TRAVEL;
+    const hy = sy - ny * STICK_TRAVEL;   // wire is positive-up, screen is not
+    const deflected = Math.hypot(nx, ny) > 0.004;
+    const t = lit(side + '3', pressed);
+
+    g.beginPath(); g.arc(sx, sy, STICK_OUTER, 0, 7);
+    g.fillStyle = C.idle; g.fill();
+    g.strokeStyle = C.edge; g.lineWidth = 1.5; g.stroke();
+
+    if (deflected) {
+      g.beginPath(); g.arc(sx, sy, 2.5, 0, 7); g.fillStyle = C.edge; g.fill();
+    }
+    // L3/R3 glow: without this, a pressed stick is indistinguishable from a
+    // merely deflected one, since both would just be accent-coloured.
+    if (t > 0.02) {
+      const grd = g.createRadialGradient(hx, hy, STICK_INNER * 0.6, hx, hy, STICK_INNER + 12);
+      grd.addColorStop(0, withAlpha(C.accent, 0.5 * t));
+      grd.addColorStop(1, withAlpha(C.accent, 0));
+      g.fillStyle = grd;
+      g.beginPath(); g.arc(hx, hy, STICK_INNER + 12, 0, 7); g.fill();
+    }
+    g.beginPath(); g.arc(hx, hy, STICK_INNER, 0, 7);
+    g.fillStyle = deflected || t > 0.5 ? C.accent : C.muted;
+    g.fill();
+    if (t > 0.02) {
+      g.strokeStyle = withAlpha(C.onAccent, t);
+      g.lineWidth = 2; g.beginPath(); g.arc(hx, hy, STICK_INNER - 3.5, 0, 7); g.stroke();
+    }
+  }
+}
+
+// Colour helpers -------------------------------------------------------
+function hex(c) {
+  c = c.replace('#', '');
+  if (c.length === 3) c = c.split('').map(x => x + x).join('');
+  return [parseInt(c.slice(0,2),16), parseInt(c.slice(2,4),16), parseInt(c.slice(4,6),16)];
+}
+function blend(a, b, t) {
+  const A = hex(a), Bc = hex(b);
+  return `rgb(${A.map((v,i)=>Math.round(v+(Bc[i]-v)*t)).join(',')})`;
+}
+function withAlpha(c, a) {
+  const [r,gg,bb] = hex(c);
+  return `rgba(${r},${gg},${bb},${a})`;
+}
+
+// Render loop ----------------------------------------------------------
+// window.__fps is read by pc/test_ui.py to check the canvas really keeps up
+// with display rate while input is moving. It counts actual draws, so it
+// drops to zero on an idle pad, which is the point.
+let __frames = 0, __mark = performance.now(), __last = performance.now();
+window.__fps = 0;
+function frame(now) {
+  // Convert the per-second rates into this frame's blend factor.
+  const dt = Math.min(0.1, Math.max(0, (now - __last) / 1000));
+  __last = now;
+  easeK.glow = 1 - Math.exp(-GLOW_RATE * dt);
+  easeK.move = 1 - Math.exp(-MOVE_RATE * dt);
+  if (dirty || animating) {
+    dirty = animating = false;
+    draw();
+    __frames++;
+  }
+  if (now - __mark >= 500) {
+    window.__fps = Math.round(__frames * 1000 / (now - __mark));
+    __frames = 0; __mark = now;
+  }
+  requestAnimationFrame(frame);
+}
+resize();
+requestAnimationFrame(frame);
+
+// ---------------------------------------------------------------------------
+// Bridge. Python calls these; nothing here polls.
+// ---------------------------------------------------------------------------
+const $ = id => document.getElementById(id);
+
+window.setPad = s => { state = s; dirty = true; };
+
+window.setStats = st => {
+  $('sClient').textContent  = st.client || '—';
+  $('sPackets').textContent = st.packets;
+  $('sRate').textContent    = st.rate;
+  const box = $('status');
+  box.className = 'status ' + st.level;
+  $('statusText').textContent = st.label;
+  box.title = st.note || '';
+  if (st.note !== undefined) $('phonesNote').textContent = st.note;
+};
+
+window.setInfo = info => {
+  $('sub').textContent  = info.sub;
+  $('addr').textContent = info.address;
+  $('addrHint').innerHTML = info.hint;
+  if (info.version) $('ver').textContent = info.version;
+  setKind(info.kind);
+};
+
+window.appendLog = line => {
+  const log = $('log');
+  const el = document.createElement('div');
+  el.textContent = line;
+  log.appendChild(el);
+  // Capped like the instrument front end: a session left running for days
+  // would otherwise grow the page without bound.
+  while (log.childElementCount > 400) log.removeChild(log.firstChild);
+  log.scrollTop = log.scrollHeight;
+};
+
+function setKind(kind) {
+  for (const [id, k] of [['btnX360', 'x360'], ['btnDs4', 'ds4']]) {
+    $(id).classList.toggle('on', kind === k);
+    $(id).setAttribute('aria-pressed', kind === k ? 'true' : 'false');
+  }
+  $('padHint').textContent = kind === 'ds4'
+    ? 'Games show PlayStation prompts, but titles that only support XInput will not see it at all.'
+    : 'XInput. Every modern game accepts it, but prompts show Xbox buttons.';
+}
+
+function busy(on) {
+  $('btnX360').disabled = on;
+  $('btnDs4').disabled = on;
+}
+
+for (const id of ['btnX360', 'btnDs4']) {
+  $(id).addEventListener('click', async e => {
+    const kind = e.currentTarget.dataset.kind;
+    busy(true);
+    setKind(kind);
+    try { await window.pywebview.api.set_pad(kind); } finally { busy(false); }
+  });
+}
+
+/* QR:BEGIN */
+// Minimal QR encoder: byte mode, error correction level M, versions 1-10
+// (up to 213 bytes, several times the longest link this shows). Written out
+// here rather than pulled in as a library because this window runs offline
+// from a PyInstaller bundle. Follows ISO/IEC 18004; pc/test_web_page.py
+// decodes its output with an independent decoder to prove it.
+const QR = (() => {
+  // Level M, indexed by version.
+  const ECC_PER_BLOCK = [0, 10, 16, 26, 18, 24, 16, 18, 22, 22, 26];
+  const BLOCKS        = [0, 1, 1, 1, 2, 2, 4, 4, 4, 5, 5];
+  const FORMAT_M = 0;
+
+  const gfMul = (x, y) => {
+    let z = 0;
+    for (let i = 7; i >= 0; i--) {
+      z = (z << 1) ^ ((z >>> 7) * 0x11D);
+      z ^= ((y >>> i) & 1) * x;
+    }
+    return z;
+  };
+
+  function rsDivisor(degree) {
+    const r = new Array(degree).fill(0);
+    r[degree - 1] = 1;
+    let root = 1;
+    for (let i = 0; i < degree; i++) {
+      for (let j = 0; j < r.length; j++) {
+        r[j] = gfMul(r[j], root);
+        if (j + 1 < r.length) r[j] ^= r[j + 1];
+      }
+      root = gfMul(root, 0x02);
+    }
+    return r;
+  }
+
+  function rsRemainder(data, divisor) {
+    const r = divisor.map(() => 0);
+    for (const b of data) {
+      const factor = b ^ r.shift();
+      r.push(0);
+      divisor.forEach((d, i) => { r[i] ^= gfMul(d, factor); });
+    }
+    return r;
+  }
+
+  const rawModules = (ver) => {
+    let n = (16 * ver + 128) * ver + 64;
+    if (ver >= 2) {
+      const a = Math.floor(ver / 7) + 2;
+      n -= (25 * a - 10) * a - 55;
+      if (ver >= 7) n -= 36;
+    }
+    return n;
+  };
+  const dataCodewords = (ver) =>
+    Math.floor(rawModules(ver) / 8) - ECC_PER_BLOCK[ver] * BLOCKS[ver];
+
+  function alignmentPositions(ver, size) {
+    if (ver === 1) return [];
+    const n = Math.floor(ver / 7) + 2;
+    const step = Math.ceil((ver * 4 + 4) / (n * 2 - 2)) * 2;
+    const out = [6];
+    for (let pos = size - 7; out.length < n; pos -= step) out.splice(1, 0, pos);
+    return out;
+  }
+
+  function encode(text) {
+    const bytes = Array.from(new TextEncoder().encode(text));
+    let ver = 1;
+    for (;; ver++) {
+      if (ver > 10) throw new Error("text too long for a QR code here");
+      const ccBits = ver < 10 ? 8 : 16;
+      if (4 + ccBits + bytes.length * 8 <= dataCodewords(ver) * 8) break;
+    }
+    const size = ver * 4 + 17;
+
+    // Data bits: byte mode, length, payload, terminator, padding.
+    const bits = [];
+    const put = (val, len) => { for (let i = len - 1; i >= 0; i--) bits.push((val >>> i) & 1); };
+    put(0x4, 4);
+    put(bytes.length, ver < 10 ? 8 : 16);
+    for (const b of bytes) put(b, 8);
+    const capacity = dataCodewords(ver) * 8;
+    put(0, Math.min(4, capacity - bits.length));
+    put(0, (8 - bits.length % 8) % 8);
+    for (let pad = 0xEC; bits.length < capacity; pad ^= 0xEC ^ 0x11) put(pad, 8);
+    const data = [];
+    for (let i = 0; i < bits.length; i += 8) {
+      let b = 0;
+      for (let j = 0; j < 8; j++) b = (b << 1) | bits[i + j];
+      data.push(b);
+    }
+
+    // Split into blocks, add Reed-Solomon, interleave.
+    const nBlocks = BLOCKS[ver], eccLen = ECC_PER_BLOCK[ver];
+    const rawCw = Math.floor(rawModules(ver) / 8);
+    const nShort = nBlocks - rawCw % nBlocks;
+    const shortLen = Math.floor(rawCw / nBlocks);
+    const div = rsDivisor(eccLen);
+    const blocks = [];
+    for (let i = 0, k = 0; i < nBlocks; i++) {
+      const dat = data.slice(k, k + shortLen - eccLen + (i < nShort ? 0 : 1));
+      k += dat.length;
+      const ecc = rsRemainder(dat, div);
+      if (i < nShort) dat.push(0);
+      blocks.push(dat.concat(ecc));
+    }
+    const codewords = [];
+    for (let i = 0; i < blocks[0].length; i++) {
+      blocks.forEach((blk, j) => {
+        if (i !== shortLen - eccLen || j >= nShort) codewords.push(blk[i]);
+      });
+    }
+
+    // Function patterns.
+    const m = [], fn = [];
+    for (let y = 0; y < size; y++) { m.push(new Array(size).fill(false)); fn.push(new Array(size).fill(false)); }
+    const setF = (x, y, dark) => { m[y][x] = dark; fn[y][x] = true; };
+    for (let i = 0; i < size; i++) { setF(6, i, i % 2 === 0); setF(i, 6, i % 2 === 0); }
+    const finder = (cx, cy) => {
+      for (let dy = -4; dy <= 4; dy++) for (let dx = -4; dx <= 4; dx++) {
+        const d = Math.max(Math.abs(dx), Math.abs(dy)), x = cx + dx, y = cy + dy;
+        if (x >= 0 && x < size && y >= 0 && y < size) setF(x, y, d !== 2 && d !== 4);
+      }
+    };
+    finder(3, 3); finder(size - 4, 3); finder(3, size - 4);
+    const al = alignmentPositions(ver, size);
+    for (let i = 0; i < al.length; i++) for (let j = 0; j < al.length; j++) {
+      if ((i === 0 && j === 0) || (i === 0 && j === al.length - 1) || (i === al.length - 1 && j === 0)) continue;
+      for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++)
+        setF(al[i] + dx, al[j] + dy, Math.max(Math.abs(dx), Math.abs(dy)) !== 1);
+    }
+    const formatBits = (mask) => {
+      const d = (FORMAT_M << 3) | mask;
+      let r = d;
+      for (let i = 0; i < 10; i++) r = (r << 1) ^ ((r >>> 9) * 0x537);
+      const b = ((d << 10) | r) ^ 0x5412;
+      const bit = (i) => ((b >>> i) & 1) !== 0;
+      for (let i = 0; i <= 5; i++) setF(8, i, bit(i));
+      setF(8, 7, bit(6)); setF(8, 8, bit(7)); setF(7, 8, bit(8));
+      for (let i = 9; i < 15; i++) setF(14 - i, 8, bit(i));
+      for (let i = 0; i < 8; i++) setF(size - 1 - i, 8, bit(i));
+      for (let i = 8; i < 15; i++) setF(8, size - 15 + i, bit(i));
+      setF(8, size - 8, true);
+    };
+    formatBits(0);
+    if (ver >= 7) {
+      let r = ver;
+      for (let i = 0; i < 12; i++) r = (r << 1) ^ ((r >>> 11) * 0x1F25);
+      const b = (ver << 12) | r;
+      for (let i = 0; i < 18; i++) {
+        const dark = ((b >>> i) & 1) !== 0, a = size - 11 + i % 3, c = Math.floor(i / 3);
+        setF(a, c, dark); setF(c, a, dark);
+      }
+    }
+
+    // Codewords in the zigzag.
+    let bi = 0;
+    for (let right = size - 1; right >= 1; right -= 2) {
+      if (right === 6) right = 5;
+      for (let v = 0; v < size; v++) for (let j = 0; j < 2; j++) {
+        const x = right - j, up = ((right + 1) & 2) === 0, y = up ? size - 1 - v : v;
+        if (!fn[y][x] && bi < codewords.length * 8) {
+          m[y][x] = ((codewords[bi >>> 3] >>> (7 - (bi & 7))) & 1) !== 0;
+          bi++;
+        }
+      }
+    }
+
+    const MASKS = [
+      (x, y) => (x + y) % 2 === 0, (x, y) => y % 2 === 0, (x) => x % 3 === 0,
+      (x, y) => (x + y) % 3 === 0, (x, y) => (Math.floor(x / 3) + Math.floor(y / 2)) % 2 === 0,
+      (x, y) => x * y % 2 + x * y % 3 === 0, (x, y) => (x * y % 2 + x * y % 3) % 2 === 0,
+      (x, y) => ((x + y) % 2 + x * y % 3) % 2 === 0,
+    ];
+    const applyMask = (k) => {
+      for (let y = 0; y < size; y++) for (let x = 0; x < size; x++)
+        if (!fn[y][x] && MASKS[k](x, y)) m[y][x] = !m[y][x];
+    };
+    // Any mask is valid; the penalty only steers away from patterns that are
+    // hard for a camera (long runs, blocks, finder look-alikes, imbalance).
+    const penalty = () => {
+      let p = 0, dark = 0;
+      const line = (get) => {
+        let run = 1;
+        for (let i = 1; i <= size; i++) {
+          if (i < size && get(i) === get(i - 1)) run++;
+          else { if (run >= 5) p += run - 2; run = 1; }
+        }
+        const pat = [1, 0, 1, 1, 1, 0, 1];
+        for (let i = 0; i + 7 <= size; i++) {
+          if (!pat.every((v, k) => (get(i + k) ? 1 : 0) === v)) continue;
+          const light = (a, b) => { for (let k = a; k < b; k++) if (k >= 0 && k < size && get(k)) return false; return true; };
+          if (light(i - 4, i) || light(i + 7, i + 11)) p += 40;
+        }
+      };
+      for (let y = 0; y < size; y++) line((i) => m[y][i]);
+      for (let x = 0; x < size; x++) line((i) => m[i][x]);
+      for (let y = 0; y < size - 1; y++) for (let x = 0; x < size - 1; x++) {
+        const c = m[y][x];
+        if (c === m[y][x + 1] && c === m[y + 1][x] && c === m[y + 1][x + 1]) p += 3;
+      }
+      for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) if (m[y][x]) dark++;
+      const total = size * size;
+      p += (Math.ceil(Math.abs(dark * 20 - total * 10) / total) - 1) * 10;
+      return p;
+    };
+    let best = 0, bestScore = Infinity;
+    for (let k = 0; k < 8; k++) {
+      applyMask(k); formatBits(k);
+      const s = penalty();
+      if (s < bestScore) { bestScore = s; best = k; }
+      applyMask(k);
+    }
+    applyMask(best); formatBits(best);
+    return m;
+  }
+
+  /** Draw onto a canvas: dark on white with the standard 4-module quiet zone. */
+  function draw(canvas, text, px) {
+    const m = encode(text), n = m.length + 8;
+    const cell = Math.max(2, Math.floor(px / n));
+    canvas.width = canvas.height = n * cell;
+    const g = canvas.getContext("2d");
+    g.fillStyle = "#fff"; g.fillRect(0, 0, canvas.width, canvas.height);
+    g.fillStyle = "#000";
+    m.forEach((row, y) => row.forEach((on, x) => {
+      if (on) g.fillRect((x + 4) * cell, (y + 4) * cell, cell, cell);
+    }));
+  }
+
+  return { encode, draw };
+})();
+/* QR:END */
+
+// ---------------------------------------------------------------------------
+// Browser client: the switch, the link, the QR sheet. Shared verbatim by both
+// front ends, which use the same element ids for it.
+// ---------------------------------------------------------------------------
+let webState = { on: false, urls: [] };
+let qrIp = null, qrReturn = null;
+const webApi = () => window.pywebview && window.pywebview.api;
+
+window.setWeb = st => {
+  webState = st || { on: false, urls: [] };
+  const urls = webState.urls || [];
+  const first = urls[0];
+  const t = $('webToggle');
+  t.setAttribute('aria-checked', webState.on ? 'true' : 'false');
+  t.disabled = false;
+  $('webUrlRow').hidden = !(webState.on && first);
+  $('webUrl').textContent = first ? first.url : '';
+  $('webUrl').title = first ? first.url : '';
+  const note = $('webNote');
+  note.classList.toggle('err', !!webState.error);
+  note.textContent = webState.error
+    ? 'Could not start: ' + webState.error
+    : !webState.on ? 'For phones without the app, such as an iPhone.'
+    : first ? 'On. Open this link on the phone' + (first.name ? ' (via ' + first.name + ')' : '') + '.'
+    : 'On, but this PC has no LAN address. Connect it to the Wi-Fi the phone uses.';
+  if (!webState.on || !first) closeQr();
+  else if (!$('qrSheet').hidden) openQr(qrIp);   // new token after a restart
+};
+
+$('webToggle').addEventListener('click', async () => {
+  const api = webApi();
+  if (!api) return;
+  const t = $('webToggle');
+  t.disabled = true;
+  try { window.setWeb(await api.set_web(!webState.on)); }
+  catch (e) { t.disabled = false; }
+});
+
+async function copyText(text, btn) {
+  let ok = false;
+  try {
+    await navigator.clipboard.writeText(text);
+    ok = true;
+  } catch (e) {
+    // The async clipboard can be refused inside the WebView; the old
+    // selection-based copy still works there.
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    try { ok = document.execCommand('copy'); } catch (e2) { ok = false; }
+    ta.remove();
+  }
+  if (btn) {
+    const was = btn.dataset.label || btn.textContent;
+    btn.dataset.label = was;
+    btn.textContent = ok ? 'Copied' : 'Copy failed';
+    setTimeout(() => { btn.textContent = was; }, 1400);
+  }
+}
+
+$('webCopy').addEventListener('click', e => {
+  const first = (webState.urls || [])[0];
+  if (first) copyText(first.url, e.currentTarget);
+});
+
+function openQr(ip) {
+  const urls = webState.urls || [];
+  if (!urls.length) return;
+  const u = urls.find(x => x.ip === ip) || urls[0];
+  qrIp = u.ip;
+  $('qrUrl').textContent = u.url;
+  try { QR.draw($('qrCanvas'), u.url, 440); } catch (e) { /* link too long; the text is still there */ }
+
+  // Every other adapter's link, in case the first guess is not the phone's
+  // network (a VPN, a second NIC, a virtual switch).
+  const others = $('qrOthers');
+  others.querySelectorAll('button').forEach(b => b.remove());
+  for (const o of urls) {
+    if (o.ip === u.ip) continue;
+    const b = document.createElement('button');
+    b.className = 'ghost';
+    b.textContent = o.ip + (o.name ? '  ·  ' + o.name : '');
+    b.addEventListener('click', () => openQr(o.ip));
+    others.appendChild(b);
+  }
+  others.hidden = urls.length < 2;
+
+  const sheet = $('qrSheet');
+  if (sheet.hidden) {
+    qrReturn = document.activeElement;
+    sheet.hidden = false;
+    $('qrClose').focus();
+  }
+}
+
+function closeQr() {
+  const sheet = $('qrSheet');
+  if (sheet.hidden) return;
+  sheet.hidden = true;
+  if (qrReturn && qrReturn.focus) qrReturn.focus();
+  qrReturn = null;
+}
+
+$('webQr').addEventListener('click', () => openQr(qrIp));
+$('qrClose').addEventListener('click', closeQr);
+$('qrSheet').addEventListener('click', e => { if (e.target === e.currentTarget) closeQr(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeQr(); });
+
+/* PAIRING:BEGIN */
+// ---------------------------------------------------------------------------
+// Pairing: the prompt for a phone asking to pair, and the paired-phones list.
+// Shared verbatim by both front ends, which use the same element ids for it.
+// Python pushes setPairing (the open prompt, or null) and setPhones.
+// ---------------------------------------------------------------------------
+let pairPrompt = null, pairTimer = 0, pairArmTimer = 0, pairReturn = null;
+let phoneList = [], phonesReturn = null;
+const pairApi = () => window.pywebview && window.pywebview.api;
+
+function hideSheet(id, back) {
+  const sheet = $(id);
+  if (sheet.hidden) return;
+  sheet.hidden = true;
+  if (back && back.focus) back.focus();
+}
+
+window.setPairing = pr => {
+  if (!pr) {
+    pairPrompt = null;
+    clearInterval(pairTimer);
+    clearTimeout(pairArmTimer);
+    hideSheet('pairSheet', pairReturn);
+    pairReturn = null;
+    return;
+  }
+  if (pairPrompt && pairPrompt.id === pr.id) return;   // already showing this one
+  pairPrompt = pr;
+  $('pairName').textContent = pr.name + ' wants to connect to this PC';
+  $('pairCode').textContent = pr.code;
+  $('pairCode').setAttribute('aria-label', 'Code ' + pr.code.split('').join(' '));
+  const deadline = performance.now() + pr.seconds * 1000;
+  const tick = () => {
+    const left = Math.max(0, Math.ceil((deadline - performance.now()) / 1000));
+    $('pairCount').textContent = left + ' s left';
+  };
+  tick();
+  clearInterval(pairTimer);
+  pairTimer = setInterval(tick, 250);
+  // Allow arms a moment after the prompt appears, so a click already on its
+  // way to whatever was under the pointer cannot approve a request that
+  // popped up beneath it.
+  $('pairAllow').disabled = true;
+  $('pairDeny').disabled = false;
+  clearTimeout(pairArmTimer);
+  pairArmTimer = setTimeout(() => { $('pairAllow').disabled = false; }, 1000);
+  const sheet = $('pairSheet');
+  if (sheet.hidden) {
+    pairReturn = document.activeElement;
+    closeQr();
+    closePhones();
+    sheet.hidden = false;
+    $('pairDeny').focus();
+  }
+};
+
+async function answerPairing(allow) {
+  const pr = pairPrompt, api = pairApi();
+  if (!pr || !api) return;
+  $('pairAllow').disabled = $('pairDeny').disabled = true;
+  try {
+    await api.pair_answer(pr.id, allow);
+    // Answered, or already gone (timed out): either way this prompt is over.
+    // A newer one, if any, is pushed again by Python.
+    if (pairPrompt === pr) window.setPairing(null);
+  } catch (e) {
+    $('pairDeny').disabled = false;
+    $('pairAllow').disabled = false;
+  }
+}
+
+window.setPhones = list => {
+  phoneList = list || [];
+  $('phonesBtn').textContent = 'Paired phones (' + phoneList.length + ')';
+  const ul = $('phonesList');
+  ul.replaceChildren();
+  for (const ph of phoneList) {
+    const li = document.createElement('li');
+    const who = document.createElement('span');
+    who.className = 'who';
+    who.textContent = ph.name;
+    const when = document.createElement('span');
+    when.className = 'when';
+    when.textContent = 'paired ' + String(ph.paired_at || '').slice(0, 10);
+    const b = document.createElement('button');
+    b.className = 'ghost key';
+    b.textContent = 'Remove';
+    b.setAttribute('aria-label', 'Remove ' + ph.name);
+    // Two clicks, so a stray one cannot unpair the phone in someone's hand.
+    let armed = 0;
+    b.addEventListener('click', async () => {
+      if (!armed) {
+        b.textContent = 'Confirm';
+        armed = setTimeout(() => { armed = 0; b.textContent = 'Remove'; }, 3000);
+        return;
+      }
+      clearTimeout(armed);
+      const api = pairApi();
+      if (!api) return;
+      b.disabled = true;
+      try { window.setPhones(await api.remove_phone(ph.id)); }
+      catch (e) { b.disabled = false; }
+    });
+    li.append(who, when, b);
+    ul.appendChild(li);
+  }
+  $('phonesEmpty').hidden = phoneList.length > 0;
+};
+
+function openPhones() {
+  const sheet = $('phonesSheet');
+  if (!sheet.hidden) return;
+  phonesReturn = document.activeElement;
+  sheet.hidden = false;
+  $('phonesClose').focus();
+}
+
+function closePhones() {
+  hideSheet('phonesSheet', phonesReturn);
+  phonesReturn = null;
+}
+
+$('pairAllow').addEventListener('click', () => answerPairing(true));
+$('pairDeny').addEventListener('click', () => answerPairing(false));
+$('phonesBtn').addEventListener('click', openPhones);
+$('phonesClose').addEventListener('click', closePhones);
+$('phonesSheet').addEventListener('click', e => { if (e.target === e.currentTarget) closePhones(); });
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  if (!$('pairSheet').hidden) answerPairing(false);   // Escape means no
+  else closePhones();
+});
+/* PAIRING:END */
+
+$('logBtn').addEventListener('click', () => {
+  const api = webApi();
+  if (api) api.open_log_folder();
+});
+</script>

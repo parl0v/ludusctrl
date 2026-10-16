@@ -1,0 +1,15 @@
+# vgamepad is deliberately NOT listed. `pip install vgamepad` hangs forever on
+# a hidden MSI Repair dialog when ViGEmBus is already installed, which is
+# exactly the machine this runs on. Install it with:
+#     python install_vgamepad.py
+# (run.bat does that for you on first launch.)
+
+# Desktop app only. Renders the UI in Edge WebView2, which ships with
+# Windows 10 and 11 -- nothing extra is installed on the target machine.
+# The terminal receiver (dualsense_link.py) does not need this.
+pywebview>=5.0
+
+# Pairing (protocol v2: ECDH, HKDF and the MAC on every packet), needed by the
+# receiver itself since 1.2. Also mints the browser client's self-signed HTTPS
+# certificate.
+cryptography>=46.0.3

@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  receiver:
+    name: Receiver tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Windows is what ships; Ubuntu catches anything that quietly came to
+        # depend on Windows in code that should not.
+        os: [windows-latest, ubuntu-latest]
+    defaults:
+      run:
+        working-directory: pc
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      # Only cryptography is needed: pairing and the browser client's
+      # certificate use it. vgamepad is deliberately not installed. It needs
+      # the ViGEmBus kernel driver, which a hosted runner does not have, and
+      # its installer hangs anyway (see pc/install_vgamepad.py). The tests
+      # below stub or avoid it; the driver-dependent ones (test_e2e.py,
+      # test_ds4.py, test_ui.py) run locally.
+      - name: Install test dependencies
+        run: python -m pip install "cryptography==46.0.3"
+      - name: test_receiver.py
+        run: python test_receiver.py
+      - name: test_layouts.py
+        run: python test_layouts.py
+      - name: test_webbridge.py
+        run: python test_webbridge.py

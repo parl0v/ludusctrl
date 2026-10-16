@@ -1,0 +1,1294 @@
+<!DOCTYPE html>
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later
+     Copyright (C) 2026 Josip Parlov (@parl0v). See NOTICE for the attribution terms. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0B0E14">
+<title>LudusCtrl</title>
+<style>
+  /* Mirrors the Android client: colors.xml, styles.xml and the drawables.
+     Sizes are the dp values from activity_main.xml read as CSS px, which is
+     the same physical size on a phone. */
+  :root {
+    --bg: #0B0E14;
+    --surface: #141922;
+    --surface-high: #1C2330;
+    --edge: #2B3444;
+    --fg: #E8EDF5;
+    --muted: #8A94A6;
+    --accent: #2E9BFF;
+    --accent-dim: #1B5FA8;
+    --on-accent: #0B0E14;
+    --live: #3FD68A;
+    --waiting: #E8B33F;
+    --dead: #5A6474;
+  }
+
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+  html, body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font: 14px/1.2 Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    -webkit-text-size-adjust: 100%;
+    overscroll-behavior: none;
+  }
+
+  /* The ScrollView's LinearLayout: 20dp sides, 20dp top, 28dp bottom. */
+  #root {
+    padding: calc(20px + env(safe-area-inset-top)) 20px
+             calc(28px + env(safe-area-inset-bottom));
+    max-width: 520px;
+    margin: 0 auto;
+  }
+
+  /* --- Header ------------------------------------------------------------ */
+
+  header { display: flex; align-items: center; }
+  header .grow { flex: 1; min-width: 0; }
+
+  h1 {
+    margin: 0;
+    font-size: 22px;
+    font-weight: 500;
+    letter-spacing: .04em;
+    line-height: 1.15;
+  }
+
+  #padName {
+    margin-top: 2px;
+    font-size: 13px;
+    color: var(--muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  #dot {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    background: var(--dead);
+    margin-right: 8px;
+    flex: none;
+  }
+
+  #linkState {
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: .1em;
+    color: var(--muted);
+    flex: none;
+  }
+
+  /* --- Pad --------------------------------------------------------------- */
+
+  #padView {
+    display: block;
+    width: 100%;
+    margin-top: 18px;
+    aspect-ratio: 400 / 250;
+  }
+
+  /* --- Surfaces ---------------------------------------------------------- */
+
+  .surface {
+    background: var(--surface);
+    border: 1px solid var(--edge);
+    border-radius: 14px;
+    margin-top: 14px;
+  }
+
+  /* --- Telemetry --------------------------------------------------------- */
+
+  #stats { display: flex; padding: 12px 0; }
+
+  #stats > div {
+    flex: 1;
+    text-align: center;
+    padding: 0 4px;
+    min-width: 0;
+  }
+
+  #stats > div + div { border-left: 1px solid var(--edge); }
+
+  .val {
+    font-family: monospace;
+    font-size: 17px;
+    color: var(--fg);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .lab {
+    margin-top: 3px;
+    font-size: 10px;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  /* --- Connection -------------------------------------------------------- */
+
+  #conn { padding: 16px; }
+
+  .fieldLabel {
+    font-size: 10px;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .fieldLabel.spaced { margin-top: 12px; }
+
+  .field {
+    margin-top: 6px;
+    padding: 12px 14px;
+    background: var(--surface-high);
+    border: 1px solid var(--edge);
+    border-radius: 10px;
+    font-family: monospace;
+    font-size: 16px;
+    color: var(--fg);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Segmented control, built from the same field tokens so it reads as part
+     of the card rather than as a bolted-on web widget. */
+  .seg {
+    display: flex;
+    margin-top: 6px;
+    background: var(--surface-high);
+    border: 1px solid var(--edge);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+
+  .seg button {
+    flex: 1;
+    padding: 12px 6px;
+    border: 0;
+    background: transparent;
+    color: var(--muted);
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+
+  .seg button + button { border-left: 1px solid var(--edge); }
+  .seg button.on { background: var(--accent); color: var(--on-accent); }
+  /* The real disabled attribute, not aria-disabled on the wrapper: that only
+     changed how it looked, and the buttons stayed tappable underneath. */
+  .seg button:disabled { opacity: .45; cursor: default; }
+
+  #padKindNote {
+    margin-top: 6px;
+    font-size: 12px;
+    line-height: 1.3;
+    color: var(--muted);
+  }
+
+  #toggle {
+    display: block;
+    width: 100%;
+    margin-top: 16px;
+    padding: 14px;
+    border: 0;
+    border-radius: 10px;
+    background: var(--accent);
+    color: var(--on-accent);
+    font-family: inherit;
+    font-size: 16px;
+    font-weight: 500;
+    letter-spacing: .05em;
+    cursor: pointer;
+  }
+  #toggle:active { background: var(--accent-dim); }
+  #toggle:disabled { background: var(--dead); color: var(--bg); }
+
+  /* --- Dim toggle -------------------------------------------------------- */
+
+  #dimRow {
+    display: flex;
+    align-items: center;
+    margin-top: 14px;
+    gap: 12px;
+  }
+
+  #dimToggle { width: 20px; height: 20px; accent-color: var(--accent); margin: 0; flex: none; }
+
+  label[for="dimToggle"] { font-size: 14px; color: var(--fg); }
+
+  #dimNote {
+    margin: 4px 0 0 32px;
+    font-size: 12px;
+    line-height: 1.3;
+    color: var(--muted);
+  }
+
+  #hint {
+    margin: 14px 0 0;
+    font-size: 13px;
+    line-height: 1.3;
+    color: var(--muted);
+  }
+
+  /* --- Dim veil ---------------------------------------------------------- */
+  /* Clickable so it swallows the waking tap; display:none rather than
+     transparent so it never intercepts touches while the screen is up. */
+
+  #dimVeil {
+    position: fixed;
+    inset: 0;
+    background: #000;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 10;
+  }
+  #dimVeil.on { display: flex; }
+  #dimVeil:focus { outline: none; }
+  #dimVeil span { opacity: .30; color: var(--muted); font-size: 13px; }
+
+  #version, #credit {
+    margin: 18px 0 0;
+    font-size: 11px;
+    color: var(--muted);
+    opacity: .7;
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+
+<div id="root">
+
+  <header>
+    <div class="grow">
+      <h1>LudusCtrl</h1>
+      <div id="padName">No gamepad — pair one over Bluetooth</div>
+    </div>
+    <div id="dot"></div>
+    <div id="linkState" aria-live="polite">OFFLINE</div>
+  </header>
+
+  <canvas id="padView" role="img" aria-label="Live view of the controller's buttons and sticks"></canvas>
+
+  <div class="surface" id="stats">
+    <div><div class="val" id="statRtt">—</div><div class="lab">Round trip</div></div>
+    <div><div class="val" id="statSent">—</div><div class="lab">Packets</div></div>
+    <div><div class="val" id="statRate">—</div><div class="lab">Throughput</div></div>
+  </div>
+
+  <div class="surface" id="conn">
+    <div class="fieldLabel">PC address</div>
+    <div class="field" id="hostField">—</div>
+    <div class="fieldLabel spaced">Port</div>
+    <div class="field" id="portField">—</div>
+
+    <div class="fieldLabel spaced">Virtual pad on the PC</div>
+    <div class="seg" id="padKind" role="group" aria-label="Virtual pad on the PC">
+      <button data-kind="x360" class="on" aria-pressed="true" disabled>Xbox 360</button>
+      <button data-kind="ds4" aria-pressed="false" disabled>DualShock 4</button>
+    </div>
+    <div id="padKindNote">Connect first, then choose what Windows sees.</div>
+
+    <button id="toggle">Start link</button>
+  </div>
+
+  <div id="dimRow">
+    <input type="checkbox" id="dimToggle">
+    <label for="dimToggle">Dim the screen while linked</label>
+  </div>
+  <div id="dimNote">
+    Browsers only send gamepad input to the page you are looking at, so the
+    screen has to stay on. This blacks it out instead, which saves battery on
+    OLED. Tap to bring it back.
+  </div>
+
+  <p id="hint">
+    Pair your controller over Bluetooth, then press Start link. Press a button
+    on the pad first if it does not appear — browsers hide gamepads until one
+    is used.
+  </p>
+
+  <p id="version">LudusCtrl PC <span id="versionNum">__LUDUSCTRL_VERSION__</span></p>
+  <p id="credit">by Josip Parlov (@parl0v) &middot; GNU AGPL 3.0 or later, no warranty</p>
+
+</div>
+
+<div id="dimVeil" role="button" tabindex="-1"
+     aria-label="Screen dimmed. Tap, or press any key, to bring it back."><span>Tap to wake</span></div>
+
+<script>
+"use strict";
+
+/* ===========================================================================
+   Wire format: the same 20-byte DSLINK packet the Android client sends, so the
+   receiver has one input format to parse. Little-endian. See docs/PROTOCOL.md.
+   =========================================================================== */
+
+const MAGIC = 0xD5, VERSION = 1, PACKET_SIZE = 20;
+const FLAG_PAD_CONNECTED = 0x01;
+
+const BTN = {
+  DPAD_UP: 0x0001, DPAD_DOWN: 0x0002, DPAD_LEFT: 0x0004, DPAD_RIGHT: 0x0008,
+  START: 0x0010, BACK: 0x0020, LEFT_THUMB: 0x0040, RIGHT_THUMB: 0x0080,
+  LEFT_SHOULDER: 0x0100, RIGHT_SHOULDER: 0x0200, GUIDE: 0x0400,
+  A: 0x1000, B: 0x2000, X: 0x4000, Y: 0x8000,
+};
+
+// W3C "standard gamepad" index -> XInput bit. The browser normalises pads to
+// this layout with its own vendor tables, so this path cannot inherit a wrong
+// OS-level key layout the way a native app can. Indices 6 and 7 are the
+// triggers and are read as analog values, not bits.
+const STANDARD = {
+  0: BTN.A, 1: BTN.B, 2: BTN.X, 3: BTN.Y,
+  4: BTN.LEFT_SHOULDER, 5: BTN.RIGHT_SHOULDER,
+  8: BTN.BACK, 9: BTN.START,
+  10: BTN.LEFT_THUMB, 11: BTN.RIGHT_THUMB,
+  12: BTN.DPAD_UP, 13: BTN.DPAD_DOWN, 14: BTN.DPAD_LEFT, 15: BTN.DPAD_RIGHT,
+  16: BTN.GUIDE,
+};
+
+const LAYOUT = { UNKNOWN: 0, PLAYSTATION: 1, XBOX: 2, NINTENDO: 3 };
+
+// Matches PadReader's radial deadzone. A DualSense rests around 0.4% off
+// centre and jitters either side of it; passed through untouched that reads as
+// drift in any game applying no deadzone of its own.
+const DEADZONE = 0.02;
+
+function radial(x, y) {
+  const mag = Math.hypot(x, y);
+  if (mag <= DEADZONE) return [0, 0];
+  const scaled = Math.min((mag - DEADZONE) / (1 - DEADZONE), 1);
+  const k = scaled / mag;
+  return [x * k, y * k];
+}
+
+function toAxis(v) {
+  v = Math.max(-1, Math.min(1, v));
+  return Math.round(v * (v < 0 ? 32768 : 32767));
+}
+
+/**
+ * Which glyph set the pad wants drawn. Mirrors PadReader.layoutOf().
+ *
+ * The browser folds vendor and product ids into the id string, so both signals
+ * are read from it: the vendor id is authoritative and is tried first, then
+ * the name as a fallback for third-party pads that report a house vendor id
+ * but still carry the brand in their name.
+ *
+ * Order inside the name check matters. "Xbox Wireless Controller" contains
+ * "wireless controller", so testing the PlayStation names first would draw
+ * every official Xbox pad as a DualSense, touchpad and all. Kotlin tests
+ * "xbox" first for exactly this reason; keep the two in the same order.
+ */
+function layoutOf(id) {
+  const s = (id || "").toLowerCase();
+
+  if (s.includes("054c")) return LAYOUT.PLAYSTATION;
+  if (s.includes("045e")) return LAYOUT.XBOX;
+  if (s.includes("057e")) return LAYOUT.NINTENDO;
+
+  if (s.includes("xbox")) return LAYOUT.XBOX;
+  if (s.includes("dualsense") || s.includes("dualshock") ||
+      s.includes("playstation") || s.includes("wireless controller")) return LAYOUT.PLAYSTATION;
+  if (s.includes("switch") || s.includes("joy-con") ||
+      s.includes("pro controller")) return LAYOUT.NINTENDO;
+  return LAYOUT.UNKNOWN;
+}
+
+/* ===========================================================================
+   PadView, ported from PadView.kt. Same 400x250 design space, same geometry,
+   same easing rates, so the two clients animate identically.
+   =========================================================================== */
+
+const VW = 400, VH = 250;
+
+const STICK_TRAVEL = 14, STICK_OUTER = 26, STICK_INNER = 11;
+
+// Easing is a rate per second, not a fraction per frame: a per-frame fraction
+// animates at whatever the refresh rate happens to be, so 60 Hz and 120 Hz
+// would settle at visibly different speeds from identical constants.
+const GLOW_RATE = 38;   // ~80 ms to settle
+const MOVE_RATE = 55;   // ~55 ms to settle
+
+const G = { L1:0, R1:1, UP:2, DOWN:3, LEFT:4, RIGHT:5, TRIANGLE:6, CIRCLE:7,
+            CROSS:8, SQUARE:9, CREATE:10, OPTIONS:11, PS:12, L3:13, R3:14, COUNT:15 };
+const M = { LX:0, LY:1, RX:2, RY:3, LT:4, RT:5, COUNT:6 };
+
+const glowAmt = new Float32Array(G.COUNT);
+const moveAmt = new Float32Array(M.COUNT);
+
+const C = {
+  accent: "#2E9BFF", idle: "#1C2330", body: "#141922",
+  edge: "#2B3444", onAccent: "#0B0E14", muted: "#8A94A6",
+};
+
+const RGB = {
+  accent: [0x2E, 0x9B, 0xFF],
+  idle:   [0x1C, 0x23, 0x30],
+  onAccent: [0x0B, 0x0E, 0x14],
+};
+
+const LAYOUTS = {};
+
+LAYOUTS[LAYOUT.PLAYSTATION] = {
+  faceN: "△", faceE: "○", faceS: "✕", faceW: "□",
+  shoulderL: "L1", shoulderR: "R1", triggerL: "L2", triggerR: "R2", guide: "PS",
+  lsX: 148, lsY: 148, rsX: 252, rsY: 148,
+  dpadX: 100, dpadY: 105, faceX: 300, faceY: 105,
+  guideX: 200, guideY: 150,
+  pillLX: 148, pillLY: 73, pillRX: 252, pillRY: 73,
+  bodyStyle: "ps", touchpad: true,
+};
+
+// Xbox puts the left stick where PlayStation puts the d-pad, and the d-pad
+// down where PlayStation puts the left stick.
+LAYOUTS[LAYOUT.XBOX] = {
+  faceN: "Y", faceE: "B", faceS: "A", faceW: "X",
+  shoulderL: "LB", shoulderR: "RB", triggerL: "LT", triggerR: "RT", guide: "❖",
+  lsX: 104, lsY: 98, rsX: 246, rsY: 150,
+  dpadX: 146, dpadY: 150, faceX: 296, faceY: 98,
+  guideX: 200, guideY: 92,
+  pillLX: 176, pillLY: 112, pillRX: 224, pillRY: 112,
+  bodyStyle: "xbox", touchpad: false,
+};
+
+// Nintendo letters east/south the opposite way round, so the same bit draws a
+// different letter.
+LAYOUTS[LAYOUT.NINTENDO] = Object.assign({}, LAYOUTS[LAYOUT.XBOX], {
+  faceN: "X", faceE: "A", faceS: "B", faceW: "Y",
+  shoulderL: "L", shoulderR: "R", triggerL: "ZL", triggerR: "ZR", guide: "⌂",
+  bodyStyle: "nintendo",
+});
+
+// Unrecognised pad, matching layoutFor()'s else. Most generic Bluetooth pads
+// print the letters Android itself reports (BUTTON_A/B/X/Y, L1/L2), so those
+// are the least wrong guess; drawing a DualSense promised a touchpad the pad
+// does not have.
+LAYOUTS[LAYOUT.UNKNOWN] = Object.assign({}, LAYOUTS[LAYOUT.XBOX], {
+  faceN: "Y", faceE: "B", faceS: "A", faceW: "X",
+  shoulderL: "L1", shoulderR: "R1", triggerL: "L2", triggerR: "R2", guide: "●",
+  bodyStyle: "generic",
+});
+
+const canvas = document.getElementById("padView");
+const ctx = canvas.getContext("2d");
+let scale = 1, animating = false, lastFrameMs = 0;
+
+// Set whenever the canvas lost its pixels (a resize clears it) or was hidden,
+// so the next frame redraws even if the pad itself has not changed.
+let needsDraw = true;
+
+function resizeCanvas() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 3);
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  if (!w || !h) return;
+  canvas.width = Math.round(w * dpr);
+  canvas.height = Math.round(h * dpr);
+  scale = Math.min(w / VW, h / VH) * dpr;
+  needsDraw = true;
+}
+window.addEventListener("resize", resizeCanvas);
+
+function step(arr, i, target, rate, dt) {
+  const k = 1 - Math.exp(-rate * dt);
+  const next = arr[i] + (target - arr[i]) * k;
+  arr[i] = Math.abs(target - next) < 0.001 ? target : next;
+  if (arr[i] !== target) animating = true;
+  return arr[i];
+}
+
+const litness = (i, on, dt) => step(glowAmt, i, on ? 1 : 0, GLOW_RATE, dt);
+
+/** Blends the idle colour toward the accent by t. */
+function mix(t) {
+  if (t <= 0.002) return C.idle;
+  if (t >= 0.998) return C.accent;
+  const [ir, ig, ib] = RGB.idle, [ar, ag, ab] = RGB.accent;
+  return `rgb(${Math.round(ir + (ar - ir) * t)},${Math.round(ig + (ag - ig) * t)},${Math.round(ib + (ab - ib) * t)})`;
+}
+
+const rgba = ([r, g, b], a) => `rgba(${r},${g},${b},${a})`;
+
+function roundRect(x, y, w, h, r) {
+  ctx.beginPath();
+  if (ctx.roundRect) ctx.roundRect(x, y, w, h, r);
+  else {
+    // Safari before 16 has no roundRect; the pill shapes here would otherwise
+    // draw as squares.
+    const rr = Math.min(r, w / 2, h / 2);
+    ctx.moveTo(x + rr, y);
+    ctx.arcTo(x + w, y, x + w, y + h, rr);
+    ctx.arcTo(x + w, y + h, x, y + h, rr);
+    ctx.arcTo(x, y + h, x, y, rr);
+    ctx.arcTo(x, y, x + w, y, rr);
+    ctx.closePath();
+  }
+}
+
+function circle(cx, cy, r) { ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); }
+
+function text(str, cx, cy, size, color) {
+  ctx.font = `bold ${size}px Roboto, system-ui, sans-serif`;
+  ctx.textAlign = "center";
+  ctx.fillStyle = color;
+  ctx.fillText(str, cx, cy);
+}
+
+/** Soft radial halo, accent fading to transparent. A flat translucent disc
+    reads as a hard ring; the gradient is what makes a press look lit. */
+function halo(cx, cy, inner, outer, a) {
+  const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, outer);
+  g.addColorStop(0, rgba(RGB.accent, a));
+  g.addColorStop(inner / outer, rgba(RGB.accent, a));
+  g.addColorStop(1, rgba(RGB.accent, 0));
+  ctx.fillStyle = g;
+  circle(cx, cy, outer);
+  ctx.fill();
+}
+
+function drawTrigger(left, right, slot, value, name, dt) {
+  const top = 8, bottom = 26, h = bottom - top;
+  const v = step(moveAmt, slot, value / 255, MOVE_RATE, dt);
+
+  ctx.fillStyle = C.idle;
+  roundRect(left, top, right - left, h, 9);
+  ctx.fill();
+
+  if (v > 0.004) {
+    // Clip to the pill so a partial fill keeps its rounded ends.
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(left, top, (right - left) * v, h);
+    ctx.clip();
+    ctx.fillStyle = C.accent;
+    roundRect(left, top, right - left, h, 9);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  text(name, (left + right) / 2, bottom - 5, 12, v > 0.5 ? C.onAccent : C.muted);
+}
+
+function drawPill(left, top, right, bottom, slot, active, name, dt) {
+  const t = litness(slot, active, dt);
+  ctx.fillStyle = mix(t);
+  roundRect(left, top, right - left, bottom - top, (bottom - top) / 2);
+  ctx.fill();
+  text(name, (left + right) / 2, bottom - 5, 11, t > 0.5 ? C.onAccent : C.muted);
+}
+
+function drawBody(style) {
+  ctx.beginPath();
+  // Slab across the top, then a grip sweeping down each side with a notch
+  // between them. Mirrored about x=200.
+  if (style === "nintendo") {
+    // Rounder than the Xbox shell: a flat top, and short, full grips under a
+    // lower waist.
+    ctx.moveTo(94, 54);
+    ctx.lineTo(306, 54);
+    ctx.bezierCurveTo(346, 54, 372, 78, 376, 116);
+    ctx.bezierCurveTo(380, 160, 372, 204, 346, 222);
+    ctx.bezierCurveTo(322, 238, 286, 236, 274, 212);
+    ctx.bezierCurveTo(268, 200, 256, 192, 236, 190);
+    ctx.bezierCurveTo(216, 188, 184, 188, 164, 190);
+    ctx.bezierCurveTo(144, 192, 132, 200, 126, 212);
+    ctx.bezierCurveTo(114, 236, 78, 238, 54, 222);
+    ctx.bezierCurveTo(28, 204, 20, 160, 24, 116);
+    ctx.bezierCurveTo(28, 78, 54, 54, 94, 54);
+  } else if (style === "generic") {
+    // Deliberately plain, an arched top over straight-down grips, so an
+    // unknown pad does not look like any vendor's.
+    ctx.moveTo(200, 50);
+    ctx.bezierCurveTo(250, 50, 300, 53, 330, 58);
+    ctx.bezierCurveTo(360, 63, 374, 88, 374, 124);
+    ctx.bezierCurveTo(374, 160, 366, 190, 356, 212);
+    ctx.bezierCurveTo(344, 238, 300, 242, 288, 214);
+    ctx.bezierCurveTo(282, 200, 276, 186, 256, 186);
+    ctx.lineTo(144, 186);
+    ctx.bezierCurveTo(124, 186, 118, 200, 112, 214);
+    ctx.bezierCurveTo(100, 242, 56, 238, 44, 212);
+    ctx.bezierCurveTo(34, 190, 26, 160, 26, 124);
+    ctx.bezierCurveTo(26, 88, 40, 63, 70, 58);
+    ctx.bezierCurveTo(100, 53, 150, 50, 200, 50);
+  } else if (style === "xbox") {
+    // Not a relabelled DualSense: the top edge dips in the middle between two
+    // shoulder humps, and the grips run longer and swept further out.
+    ctx.moveTo(200, 74);
+    ctx.bezierCurveTo(234, 58, 270, 50, 302, 52);
+    ctx.bezierCurveTo(342, 54, 368, 78, 372, 120);
+    ctx.bezierCurveTo(378, 172, 360, 224, 320, 234);
+    ctx.bezierCurveTo(294, 240, 272, 218, 260, 194);
+    ctx.bezierCurveTo(251, 180, 238, 174, 220, 174);
+    ctx.lineTo(180, 174);
+    ctx.bezierCurveTo(162, 174, 149, 180, 140, 194);
+    ctx.bezierCurveTo(130, 220, 108, 241, 80, 234);
+    ctx.bezierCurveTo(40, 224, 22, 172, 28, 120);
+    ctx.bezierCurveTo(32, 78, 58, 54, 98, 52);
+    ctx.bezierCurveTo(130, 50, 166, 58, 200, 74);
+  } else {
+    ctx.moveTo(72, 50);
+    ctx.lineTo(328, 50);
+    ctx.bezierCurveTo(366, 50, 379, 86, 374, 124);
+    ctx.bezierCurveTo(368, 190, 342, 234, 308, 228);
+    ctx.bezierCurveTo(286, 222, 268, 196, 258, 170);
+    ctx.lineTo(142, 170);
+    ctx.bezierCurveTo(132, 196, 114, 222, 92, 228);
+    ctx.bezierCurveTo(58, 234, 32, 190, 26, 124);
+    ctx.bezierCurveTo(21, 86, 34, 50, 72, 50);
+  }
+  ctx.closePath();
+  ctx.fillStyle = C.body;
+  ctx.fill();
+  ctx.strokeStyle = C.edge;
+  ctx.lineWidth = 2;
+  ctx.lineJoin = "round";
+  ctx.stroke();
+}
+
+function drawArm(slot, on, dt, l, t, r, b) {
+  const amt = litness(slot, on, dt);
+  if (amt <= 0.002) return;
+  ctx.fillStyle = mix(amt);
+  ctx.fillRect(l, t, r - l, b - t);
+}
+
+function drawDpad(L, buttons, dt) {
+  const cx = L.dpadX, cy = L.dpadY, reach = 16, half = 6.5;
+
+  // Inactive cross underneath, then each pressed arm painted over it.
+  ctx.fillStyle = C.idle;
+  ctx.beginPath();
+  ctx.rect(cx - half, cy - reach, half * 2, reach * 2);
+  ctx.rect(cx - reach, cy - half, reach * 2, half * 2);
+  ctx.fill();
+
+  drawArm(G.UP,    buttons & BTN.DPAD_UP,    dt, cx - half,  cy - reach, cx + half,  cy - half);
+  drawArm(G.DOWN,  buttons & BTN.DPAD_DOWN,  dt, cx - half,  cy + half,  cx + half,  cy + reach);
+  drawArm(G.LEFT,  buttons & BTN.DPAD_LEFT,  dt, cx - reach, cy - half,  cx - half,  cy + half);
+  drawArm(G.RIGHT, buttons & BTN.DPAD_RIGHT, dt, cx + half,  cy - half,  cx + reach, cy + half);
+}
+
+function drawFace(cx, cy, slot, active, glyph, dt) {
+  const t = litness(slot, active, dt);
+  if (t > 0.02) halo(cx, cy, 6, 19, 0.42 * t);
+  ctx.fillStyle = mix(t);
+  circle(cx, cy, 11);
+  ctx.fill();
+  text(glyph, cx, cy + 4.5, 12, t > 0.5 ? C.onAccent : C.muted);
+}
+
+function drawFaceButtons(L, buttons, dt) {
+  const cx = L.faceX, cy = L.faceY, d = 23;
+  drawFace(cx, cy - d, G.TRIANGLE, buttons & BTN.Y, L.faceN, dt);
+  drawFace(cx + d, cy, G.CIRCLE,   buttons & BTN.B, L.faceE, dt);
+  drawFace(cx, cy + d, G.CROSS,    buttons & BTN.A, L.faceS, dt);
+  drawFace(cx - d, cy, G.SQUARE,   buttons & BTN.X, L.faceW, dt);
+}
+
+function drawSmallPill(left, top, right, bottom, slot, active, dt) {
+  ctx.fillStyle = mix(litness(slot, active, dt));
+  roundRect(left, top, right - left, bottom - top, 3);
+  ctx.fill();
+}
+
+function drawCentre(L, buttons, dt) {
+  // Touchpad, purely cosmetic: it anchors the shape as a DualSense, so only a
+  // PlayStation pad gets one.
+  if (L.touchpad) {
+    ctx.fillStyle = C.idle;
+    roundRect(165, 62, 70, 40, 7);
+    ctx.fill();
+  }
+
+  drawSmallPill(L.pillLX - 8, L.pillLY - 7, L.pillLX + 8, L.pillLY + 7,
+                G.CREATE, buttons & BTN.BACK, dt);
+  drawSmallPill(L.pillRX - 8, L.pillRY - 7, L.pillRX + 8, L.pillRY + 7,
+                G.OPTIONS, buttons & BTN.START, dt);
+
+  // PlayStation puts this between the sticks; Xbox puts it up top.
+  const t = litness(G.PS, buttons & BTN.GUIDE, dt);
+  if (t > 0.02) halo(L.guideX, L.guideY, 5, 17, 0.42 * t);
+  ctx.fillStyle = mix(t);
+  circle(L.guideX, L.guideY, 9);
+  ctx.fill();
+  text(L.guide, L.guideX, L.guideY + 3, 9, t > 0.5 ? C.onAccent : C.muted);
+}
+
+function drawStick(cx, cy, slotX, slotY, slotGlow, x, y, pressed, dt) {
+  // Y arrives positive-up from the wire; screen coordinates grow downward.
+  let nx = step(moveAmt, slotX, Math.max(-1, Math.min(1, x / 32767)), MOVE_RATE, dt);
+  let ny = step(moveAmt, slotY, Math.max(-1, Math.min(1, y / 32767)), MOVE_RATE, dt);
+
+  // Axes are reported per-axis, so a full diagonal has magnitude sqrt(2) and
+  // would push the knob outside its well. Real sticks are gated to a circle.
+  const mag = Math.hypot(nx, ny);
+  if (mag > 1) { nx /= mag; ny /= mag; }
+
+  const hx = cx + nx * STICK_TRAVEL;
+  const hy = cy - ny * STICK_TRAVEL;
+  const deflected = Math.hypot(nx, ny) > 0.004;
+  const t = litness(slotGlow, pressed, dt);
+
+  // Travel well.
+  ctx.fillStyle = C.idle;
+  circle(cx, cy, STICK_OUTER);
+  ctx.fill();
+  ctx.strokeStyle = C.edge;
+  ctx.lineWidth = 1.5;
+  circle(cx, cy, STICK_OUTER);
+  ctx.stroke();
+
+  // Centre pip, so a deflected stick still shows where centre was.
+  if (deflected) {
+    ctx.fillStyle = C.edge;
+    circle(cx, cy, 2.5);
+    ctx.fill();
+  }
+
+  // L3/R3 halo. Without it a pressed stick is indistinguishable from a merely
+  // deflected one, since both would just be accent-coloured.
+  if (t > 0.02) halo(hx, hy, STICK_INNER * 0.6, STICK_INNER + 12, 0.5 * t);
+
+  ctx.fillStyle = (deflected || t > 0.5) ? C.accent : C.muted;
+  circle(hx, hy, STICK_INNER);
+  ctx.fill();
+
+  if (t > 0.02) {
+    ctx.strokeStyle = rgba(RGB.onAccent, t);
+    ctx.lineWidth = 2;
+    circle(hx, hy, STICK_INNER - 3.5);
+    ctx.stroke();
+  }
+}
+
+function drawPad(s, dt) {
+  animating = false;
+  const L = LAYOUTS[s.layout] || LAYOUTS[LAYOUT.UNKNOWN];
+
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.translate((canvas.width - VW * scale) / 2, (canvas.height - VH * scale) / 2);
+  ctx.scale(scale, scale);
+
+  drawTrigger(62, 150, M.LT, s.lt, L.triggerL, dt);
+  drawTrigger(250, 338, M.RT, s.rt, L.triggerR, dt);
+  drawPill(62, 34, 150, 50, G.L1, s.buttons & BTN.LEFT_SHOULDER, L.shoulderL, dt);
+  drawPill(250, 34, 338, 50, G.R1, s.buttons & BTN.RIGHT_SHOULDER, L.shoulderR, dt);
+  drawBody(L.bodyStyle);
+  drawDpad(L, s.buttons, dt);
+  drawFaceButtons(L, s.buttons, dt);
+  drawCentre(L, s.buttons, dt);
+  drawStick(L.lsX, L.lsY, M.LX, M.LY, G.L3, s.lx, s.ly, s.buttons & BTN.LEFT_THUMB, dt);
+  drawStick(L.rsX, L.rsY, M.RX, M.RY, G.R3, s.rx, s.ry, s.buttons & BTN.RIGHT_THUMB, dt);
+}
+
+/* ===========================================================================
+   Link
+   =========================================================================== */
+
+const el = (id) => document.getElementById(id);
+const buf = new ArrayBuffer(PACKET_SIZE);
+const view = new DataView(buf);
+
+let ws = null, running = false, ready = false, seq = 0, sent = 0;
+let sentAtLastTick = 0, rateHz = 0, rtt = null;
+let padIndex = null, wakeLock = null, pingId = 0, reconnectTimer = 0;
+const pingSentAt = new Map();
+
+// What the PC last said about our input: when, and whether it reached a pad.
+// LIVE means the PC is applying input, not merely that a socket is open.
+const ACK_FRESH_MS = 1000;
+let lastAckAt = 0, ackApplied = false;
+
+// Replaces the computed hint until the next Start. Without it a refusal
+// ("another browser has the pad") was overwritten by the very next frame.
+let hintOverride = null;
+
+/* --- Token ------------------------------------------------------------------
+   The PC mints a random code every time it starts and shows it as part of the
+   link: https://<pc>:<port>/#t=<code>. The fragment never leaves the phone in
+   a request, so it is not in any log; it is kept for this tab only and wiped
+   from the address bar so it is not left in history or a screenshot. */
+
+const TOKEN_KEY = "ludusctrl.token";
+
+function readToken() {
+  const m = /(?:^#|&)t=([A-Za-z0-9_-]+)/.exec(location.hash);
+  if (m) {
+    try { sessionStorage.setItem(TOKEN_KEY, m[1]); } catch (e) {}
+    try { history.replaceState(null, "", location.pathname + location.search); } catch (e) {}
+    return m[1];
+  }
+  try { return sessionStorage.getItem(TOKEN_KEY); } catch (e) { return null; }
+}
+
+let token = readToken();
+// Opening a newer link in the same tab only changes the fragment.
+window.addEventListener("hashchange", () => { token = readToken() || token; });
+
+const HINT_NO_TOKEN =
+  "This page needs the full link from the LudusCtrl window on your PC. Scan " +
+  "the QR code shown there, or copy the whole link; it ends in #t= and a code.";
+
+function activePad() {
+  const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+  if (padIndex !== null && pads[padIndex] && pads[padIndex].connected) return pads[padIndex];
+  for (let i = 0; i < pads.length; i++) {
+    if (pads[i] && pads[i].connected) { padIndex = i; return pads[i]; }
+  }
+  padIndex = null;
+  return null;
+}
+
+function sample() {
+  const pad = activePad();
+  let buttons = 0, lt = 0, rt = 0, lx = 0, ly = 0, rx = 0, ry = 0;
+  let layout = LAYOUT.UNKNOWN;
+
+  // Every index below assumes the W3C standard layout. A pad the browser could
+  // not normalise reports mapping "" and raw vendor indices, where a trigger
+  // resting at -1 reads as a stick pinned to full lock. Sending that would
+  // drive the game wrong, so such a pad is reported and sent as neutral.
+  const unsupported = !!pad && pad.mapping !== "standard";
+
+  if (pad && !unsupported) {
+    layout = layoutOf(pad.id);
+    for (const i in STANDARD) {
+      const b = pad.buttons[i];
+      if (b && b.pressed) buttons |= STANDARD[i];
+    }
+    // Triggers are analog on index 6 and 7. A pad reporting them only as
+    // digital still yields value 1 when pressed, so one path covers both.
+    const lb = pad.buttons[6], rb = pad.buttons[7];
+    lt = Math.round(Math.max(0, Math.min(1, lb ? lb.value : 0)) * 255);
+    rt = Math.round(Math.max(0, Math.min(1, rb ? rb.value : 0)) * 255);
+
+    const ax = pad.axes;
+    // Y is negated: the Gamepad API reports positive-down, XInput positive-up.
+    const [lxf, lyf] = radial(ax[0] || 0, -(ax[1] || 0));
+    const [rxf, ryf] = radial(ax[2] || 0, -(ax[3] || 0));
+    lx = toAxis(lxf); ly = toAxis(lyf); rx = toAxis(rxf); ry = toAxis(ryf);
+  }
+
+  return { buttons, lx, ly, rx, ry, lt, rt,
+           connected: !!pad && !unsupported, layout, pad, unsupported };
+}
+
+function encode(s) {
+  view.setUint8(0, MAGIC);
+  view.setUint8(1, VERSION);
+  view.setUint32(2, seq >>> 0, true);
+  view.setUint16(6, s.buttons, true);
+  view.setInt16(8, s.lx, true);
+  view.setInt16(10, s.ly, true);
+  view.setInt16(12, s.rx, true);
+  view.setInt16(14, s.ry, true);
+  view.setUint8(16, s.lt);
+  view.setUint8(17, s.rt);
+  view.setUint8(18, s.connected ? FLAG_PAD_CONNECTED : 0);
+  view.setUint8(19, s.layout);
+  seq = (seq + 1) >>> 0;
+}
+
+/** Refused for a reason the user has to act on: stop, and say what to do. */
+function refuse(message) {
+  stop();
+  hintOverride = message;
+}
+
+function connect() {
+  const proto = location.protocol === "https:" ? "wss://" : "ws://";
+  // Every handler checks it still belongs to the current socket. A late
+  // onclose from a previous socket used to null out its replacement, which
+  // then looked like "busy" and stopped the link for good.
+  const sock = new WebSocket(proto + location.host + "/ws");
+  ws = sock;
+  ready = false;
+  sock.binaryType = "arraybuffer";
+
+  sock.onopen = () => {
+    if (ws !== sock) return;
+    // First message, before anything else is accepted.
+    sock.send("auth:" + (token || ""));
+  };
+
+  sock.onmessage = (ev) => {
+    if (ws !== sock || typeof ev.data !== "string") return;
+    const msg = ev.data;
+    if (msg === "ready") {
+      ready = true;
+      return;
+    }
+    if (msg.startsWith("ack:")) {
+      // ack:<seq>:<received>:<applied>, the UDP ack as text.
+      const parts = msg.split(":");
+      lastAckAt = performance.now();
+      ackApplied = parts[3] === "1";
+      return;
+    }
+    if (msg.startsWith("padkind:")) {
+      // Authoritative: the receiver owns the virtual pad, so the control
+      // follows what actually exists rather than what was tapped.
+      setPadKind(msg.slice(8), null);
+      return;
+    }
+    if (msg.startsWith("paderr:")) {
+      // A failed switch leaves no pad at all, by design -- the old one must be
+      // destroyed before the new one is made. Say so rather than showing a
+      // selection that is not real.
+      setPadKind(null, null);
+      el("padKindNote").textContent = msg.slice(7) + ".";
+      return;
+    }
+    if (msg.startsWith("pong:")) {
+      const at = pingSentAt.get(msg.slice(5));
+      if (at !== undefined) {
+        pingSentAt.delete(msg.slice(5));
+        rtt = performance.now() - at;
+      }
+      return;
+    }
+    if (msg === "busy") {
+      refuse("Another browser is already driving the pad. Close that tab, or " +
+             "wait a couple of seconds after it disconnects and try again.");
+    } else if (msg === "busy:app") {
+      refuse("The LudusCtrl Android app is connected to this PC and has the pad. " +
+             "Stop the link in the app, wait two seconds, then press Start link.");
+    } else if (msg === "denied") {
+      refuse("This link is out of date: LudusCtrl on the PC was restarted, or " +
+             "the link was opened without its code. Open the current link from " +
+             "the PC window (scan its QR code), then press Start link.");
+    }
+    // "evicted": the PC stopped counting this socket as the driver after a
+    // silence. It closes the socket next, and onclose reconnects.
+  };
+
+  sock.onclose = () => {
+    if (ws !== sock) return;
+    ws = null;
+    ready = false;
+    rtt = null;
+    lastAckAt = 0;
+    setPadKind(null, null);   // nothing to switch while there is no link
+    if (running) scheduleReconnect();   // Wi-Fi blips should self-heal.
+  };
+
+  sock.onerror = () => { try { sock.close(); } catch (e) {} };
+}
+
+function scheduleReconnect() {
+  clearTimeout(reconnectTimer);
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = 0;
+    // Not while hidden: nothing would be sent, the PC would evict the socket
+    // two seconds later, and the page would loop. Coming back reconnects.
+    if (running && !ws && document.visibilityState === "visible") connect();
+  }, 800);
+}
+
+async function takeWakeLock() {
+  if (!("wakeLock" in navigator) || (wakeLock && !wakeLock.released)) return;
+  try {
+    const sentinel = await navigator.wakeLock.request("screen");
+    // The browser drops the lock whenever the page is hidden, and the old
+    // sentinel object stays around. Only this event says it is gone; without
+    // it the lock was never retaken after an app switch, the screen locked,
+    // and the link died with it.
+    sentinel.addEventListener("release", () => { if (wakeLock === sentinel) wakeLock = null; });
+    if (!running) { sentinel.release(); return; }
+    wakeLock = sentinel;
+  } catch (e) { /* Not fatal; the user can raise the sleep timeout instead. */ }
+}
+
+async function start() {
+  hintOverride = null;
+  if (!token) {
+    hintOverride = HINT_NO_TOKEN;
+    return;
+  }
+  running = true;
+  seq = 0;
+  connect();
+  // The screen must stay on: browsers stop delivering gamepad input to a page
+  // that is not visible, exactly as Android stops delivering it to a
+  // backgrounded app.
+  await takeWakeLock();
+}
+
+function stop() {
+  running = false;
+  ready = false;
+  clearTimeout(reconnectTimer);
+  reconnectTimer = 0;
+  const sock = ws;
+  ws = null;   // first, so the socket's own onclose knows it is not current
+  if (sock) { try { sock.close(); } catch (e) {} }
+  if (wakeLock) { try { wakeLock.release(); } catch (e) {} wakeLock = null; }
+  setDim(false);
+  rtt = null;
+  lastAckAt = 0;
+  setPadKind(null, null);
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible" || !running) return;
+  takeWakeLock();
+  if (!ws && !reconnectTimer) connect();
+});
+
+/* --- Dim veil -------------------------------------------------------------- */
+// After 8 idle seconds on a live link. A browser cannot lower the backlight,
+// so this blacks the page out instead, which is where most of the OLED saving
+// comes from anyway.
+//
+// Gamepad input counts as activity, and wakes the screen: the veil is for
+// when the pad has been put down (a menu, a cutscene, a break), so a glance at
+// the phone mid-game still finds the link state readable.
+
+const DIM_AFTER_MS = 8000;
+let lastInputAt = performance.now(), dimmed = false;
+
+function setDim(on) {
+  if (on === dimmed) return;
+  dimmed = on;
+  const veil = el("dimVeil");
+  veil.classList.toggle("on", on);
+  if (on) {
+    veil.tabIndex = 0;
+    try { veil.focus(); } catch (e) {}
+  } else {
+    veil.tabIndex = -1;
+    needsDraw = true;   // frames were skipped while it was covered
+  }
+}
+
+function wake() { lastInputAt = performance.now(); setDim(false); }
+
+el("dimVeil").addEventListener("click", wake);
+el("dimToggle").addEventListener("change", () => { if (!el("dimToggle").checked) setDim(false); });
+for (const ev of ["touchstart", "mousedown", "keydown"]) {
+  // Any key wakes it too, so it can be dismissed without touching the screen.
+  document.addEventListener(ev, () => { if (dimmed) wake(); else lastInputAt = performance.now(); },
+                            { passive: true });
+}
+
+/** True if the pad moved enough since the last frame to count as activity. */
+function padActive(s, prev) {
+  if (!prev || !s.connected) return false;
+  const far = (a, b) => Math.abs(a - b) > 1200;   // ~4% of travel, past jitter
+  return s.buttons !== prev.buttons || far(s.lx, prev.lx) || far(s.ly, prev.ly) ||
+         far(s.rx, prev.rx) || far(s.ry, prev.ry) ||
+         Math.abs(s.lt - prev.lt) > 8 || Math.abs(s.rt - prev.rt) > 8;
+}
+
+/* --- Loop ------------------------------------------------------------------ */
+
+let lastSample = null, drawnKey = "";
+
+function tick(now) {
+  requestAnimationFrame(tick);
+
+  const dt = lastFrameMs === 0 ? 1 / 60
+           : Math.min(Math.max((now - lastFrameMs) / 1000, 0), 0.1);
+  lastFrameMs = now;
+
+  const s = sample();
+  const moved = padActive(s, lastSample);
+  lastSample = s;
+
+  const open = ready && ws && ws.readyState === WebSocket.OPEN;
+  // Sent every frame rather than on change, so the receiver's watchdog is fed
+  // and a dropped packet is corrected 16 ms later instead of leaving a button
+  // stuck. At 20 bytes and 60 Hz this costs about 1.2 KB/s.
+  //
+  // Unless the socket is backed up. After a Wi-Fi stall the browser would
+  // otherwise flush seconds of stale snapshots back to back, replaying old
+  // input into the game. Skipping is safe: each packet is a full snapshot.
+  if (open && ws.bufferedAmount <= 2 * PACKET_SIZE) {
+    encode(s);
+    ws.send(buf);
+    sent++;
+  }
+
+  if (moved) {
+    if (dimmed) wake(); else lastInputAt = performance.now();
+  }
+  if (el("dimToggle").checked && open) {
+    if (performance.now() - lastInputAt > DIM_AFTER_MS) setDim(true);
+  } else {
+    setDim(false);
+  }
+
+  // Redrawn only when something changed or an ease is still settling. It was
+  // every frame, which on a phone is battery spent drawing the same picture.
+  // Skipped entirely while dimmed: the pad is not on screen.
+  const key = s.buttons + "," + s.lx + "," + s.ly + "," + s.rx + "," + s.ry + "," +
+              s.lt + "," + s.rt + "," + s.layout;
+  if (!dimmed && (needsDraw || animating || key !== drawnKey)) {
+    drawnKey = key;
+    needsDraw = false;
+    drawPad(s, dt);
+  }
+  if (!animating) lastFrameMs = 0;
+
+  render(s, now);
+}
+
+setInterval(() => {
+  rateHz = sent - sentAtLastTick;
+  sentAtLastTick = sent;
+  if (ready && ws && ws.readyState === WebSocket.OPEN) {
+    const id = String(++pingId);
+    pingSentAt.set(id, performance.now());
+    // Bound the map: an unanswered ping must not accumulate forever.
+    if (pingSentAt.size > 8) pingSentAt.delete(pingSentAt.keys().next().value);
+    try { ws.send("ping:" + id); } catch (e) {}
+  }
+}, 1000);
+
+/* --- Render ---------------------------------------------------------------- */
+
+let lastKey = "";
+const shown = {};
+
+/** Writes only when the text actually changed. */
+function setText(id, value) {
+  if (shown[id] === value) return;
+  shown[id] = value;
+  el(id).textContent = value;
+}
+
+function linkState() {
+  if (!running) return "OFFLINE";
+  if (!(ready && ws && ws.readyState === WebSocket.OPEN)) return "CONNECTING";
+  if (performance.now() - lastAckAt > ACK_FRESH_MS) return "NO REPLY";
+  return ackApplied ? "LIVE" : "NO PC PAD";
+}
+
+const HINTS = {
+  OFFLINE: "Pair your controller over Bluetooth, then press Start link. Press a button on the pad first if it does not appear — browsers hide gamepads until one is used.",
+  CONNECTING: "Connecting to the receiver. If this does not change, check that LudusCtrl is still running on the PC and the phone is on the same Wi-Fi.",
+  LIVE: "Connected. Keep this page open and in front — browsers stop delivering gamepad input to a page you are not looking at.",
+  "NO PC PAD": "The PC has no virtual pad right now, so input is not reaching games. Pick a pad type above to create it again.",
+  "NO REPLY": "The PC stopped answering. It reconnects by itself when it can; check that LudusCtrl is still running on the PC.",
+};
+
+function render(s, now) {
+  const state = linkState();
+  // Counters refresh four times a second, not every frame: a number changing
+  // at 60 Hz is unreadable anyway, and each change is a DOM write.
+  const statTick = running ? Math.floor(now / 250) : 0;
+  const padLabel = !s.pad ? "none" : s.unsupported ? "unsupported" : "ok";
+
+  const key = [state, padLabel, statTick, rateHz, rtt === null ? "" : rtt | 0,
+               hintOverride || ""].join("|");
+  if (key === lastKey) return;
+  lastKey = key;
+
+  setText("linkState", state);
+  const tone = state === "LIVE" ? "live" : state === "OFFLINE" ? "idle" : "waiting";
+  el("linkState").style.color =
+    tone === "live" ? "var(--live)" : tone === "waiting" ? "var(--waiting)" : "var(--muted)";
+  el("dot").style.background =
+    tone === "live" ? "var(--live)" : tone === "waiting" ? "var(--waiting)" : "var(--dead)";
+
+  setText("padName", padLabel === "ok" ? "Gamepad connected"
+          : padLabel === "unsupported" ? "This controller's layout isn't recognised by your browser"
+          : "No gamepad — pair one over Bluetooth");
+  el("padName").style.color = padLabel === "ok" ? "var(--fg)"
+                            : padLabel === "unsupported" ? "var(--waiting)" : "var(--muted)";
+
+  setText("statRtt", rtt === null ? "—" : rtt.toFixed(1) + " ms");
+  setText("statSent", running ? sent.toLocaleString() : "—");
+  setText("statRate", running ? (rateHz * PACKET_SIZE / 1024).toFixed(1) + " KB/s" : "—");
+
+  setText("toggle", running ? "Stop link" : "Start link");
+
+  let hint = hintOverride || HINTS[state];
+  if (!hintOverride && padLabel === "unsupported") {
+    hint = "This controller's layout isn't recognised by your browser, so its buttons " +
+           "cannot be read reliably and nothing is sent for it. Try another browser " +
+           "(Safari on iPhone, Chrome on Android) or pair it in its PlayStation/Xbox mode.";
+  }
+  setText("hint", hint);
+}
+
+/* --- Virtual pad kind ------------------------------------------------------ */
+// Which controller Windows sees. Switching is a full teardown on the receiver
+// (a ViGEm target cannot change kind in place), so a game running at the time
+// will see the old pad vanish and a new one appear.
+
+let padKind = "x360", padKindPending = null;
+
+const PAD_LABEL = { x360: "Xbox 360", ds4: "DualShock 4" };
+
+function setPadKind(kind, pending) {
+  if (kind) padKind = kind;
+  padKindPending = pending;
+  const shownKind = pending || padKind;
+  const open = ready && ws && ws.readyState === WebSocket.OPEN;
+  for (const b of el("padKind").querySelectorAll("button")) {
+    const on = b.dataset.kind === shownKind;
+    b.classList.toggle("on", on);
+    b.setAttribute("aria-pressed", on ? "true" : "false");
+    b.disabled = !open;
+  }
+  el("padKindNote").textContent = !open
+    ? "Connect first, then choose what Windows sees."
+    : pending
+      ? "Switching to " + PAD_LABEL[pending] + "…"
+      : "Windows sees a " + PAD_LABEL[padKind] + ". Switching restarts the virtual pad.";
+}
+
+el("padKind").addEventListener("click", (e) => {
+  const b = e.target.closest("button");
+  if (!b || b.disabled) return;
+  if (!ready || !ws || ws.readyState !== WebSocket.OPEN) return;
+  if (b.dataset.kind === padKind && !padKindPending) return;
+  setPadKind(null, b.dataset.kind);
+  try { ws.send("pad:" + b.dataset.kind); } catch (err) {}
+});
+
+/* --- Wiring ---------------------------------------------------------------- */
+
+el("toggle").addEventListener("click", () => running ? stop() : start());
+window.addEventListener("gamepadconnected", (e) => { padIndex = e.gamepad.index; });
+window.addEventListener("gamepaddisconnected", () => { padIndex = null; });
+
+// The page is served by the receiver itself, so there is nothing to type: the
+// address is wherever this page came from. Shown read-only rather than hidden,
+// so it can be checked against the PC at a glance.
+el("hostField").textContent = location.hostname;
+el("portField").textContent = location.port || (location.protocol === "https:" ? "443" : "80");
+
+// The server fills the version in. Opened any other way the placeholder is
+// still there, and a placeholder is worse than nothing.
+if (el("versionNum").textContent.indexOf("_VERSION_") !== -1) el("version").hidden = true;
+
+if (!navigator.getGamepads) {
+  hintOverride = "This browser has no Gamepad API. On iOS use Safari; on Android use Chrome.";
+  el("toggle").disabled = true;
+} else if (!window.isSecureContext) {
+  // Worth saying plainly: on plain HTTP getGamepads() returns an empty array
+  // and the page would look broken for no visible reason.
+  hintOverride =
+    "Not a secure context. The Gamepad API is disabled over plain HTTP. Open this page with https:// and accept the certificate warning.";
+  el("toggle").disabled = true;
+} else if (!token) {
+  hintOverride = HINT_NO_TOKEN;
+}
+
+setPadKind(null, null);
+resizeCanvas();
+requestAnimationFrame(tick);
+</script>
+</body>
+</html>

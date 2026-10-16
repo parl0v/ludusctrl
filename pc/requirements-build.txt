@@ -1,0 +1,36 @@
+# Build dependencies for the Windows receiver,
+# pinned to the versions the last release was built with. Pinned rather than
+# ranged because THIRD-PARTY-NOTICES documents what these exact versions put
+# into the frozen exe; a different version can bundle a different set.
+#
+#     python -m pip install -r pc/requirements-build.txt
+#     python pc/install_vgamepad.py
+#
+# vgamepad (0.1.0) is deliberately NOT listed. `pip install vgamepad` hangs on
+# a machine that already has ViGEmBus, because its setup.py opens the MSI's
+# Repair/Remove wizard and waits for a click. pc/install_vgamepad.py installs
+# a patched copy instead; run it after this file.
+#
+# Python itself: 3.13.7 (x64) from python.org. The installer bundles that
+# interpreter, so building with another one changes what ships.
+
+# Freezing (tools/build_exe.py)
+pyinstaller==6.17.0
+pyinstaller-hooks-contrib==2025.11
+altgraph==0.17.5
+pefile==2024.8.26
+pywin32-ctypes==0.2.3
+
+# Desktop window (pc/app.py) and what it pulls in
+pywebview==6.2.1
+bottle==0.13.4
+proxy_tools==0.1.0
+pythonnet==3.1.0
+clr_loader==0.3.1
+typing_extensions==4.15.0
+
+# Browser client certificate (pc/webbridge.py). build_exe.py refuses to build
+# without it, because the frozen exe cannot pip install it later.
+cryptography==46.0.3
+cffi==2.0.0
+pycparser==2.22
