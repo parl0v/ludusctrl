@@ -49,7 +49,7 @@ removed when you uninstall the app, and it is never transmitted anywhere.
 ## Reporting a problem
 
 If you tap **Report a problem**, the app opens your own email app with a
-pre-filled message to **josipparlov@protonmail.com**. The message contains:
+pre-filled message to **[josipparlov@protonmail.com](mailto:josipparlov@protonmail.com)**. The message contains:
 
 - the app version;
 - your device's manufacturer and model, and its Android version;
@@ -137,4 +137,4 @@ collection will say so explicitly.
 
 ## Contact
 
-Questions about this policy: **josipparlov@protonmail.com**
+Questions about this policy: **[josipparlov@protonmail.com](mailto:josipparlov@protonmail.com)**
